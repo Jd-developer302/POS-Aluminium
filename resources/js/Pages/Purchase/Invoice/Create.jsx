@@ -1,0 +1,88 @@
+import React from 'react';
+import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { Head, Link, useForm, usePage } from '@inertiajs/react';
+import { transformPurchaseInvoiceItems } from '@/lib/purchaseInvoiceSubmitItems';
+import PurchaseInvoiceForm from './_Form';
+
+function defaultPurchaseInvoiceNumber(prefix) {
+    const p = prefix && String(prefix).trim() ? String(prefix).trim() : 'INV';
+    return `${p}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Date.now().toString().slice(-4)}`;
+}
+
+export default function Create({
+    suppliers,
+    branches,
+    warehouses,
+    products,
+    variants,
+    batches,
+    invoice_prefix = 'INV',
+}) {
+    const { flash } = usePage().props;
+
+    const { data, setData, post, processing, errors, transform } = useForm({
+        supplier_id: '',
+        branch_id: '',
+        warehouse_id: '',
+        invoice_number: defaultPurchaseInvoiceNumber(invoice_prefix),
+        invoice_date: new Date().toISOString().split('T')[0],
+        due_date: '',
+        notes: '',
+        shipping_cost: 0,
+        discount_amount: 0,
+        items: [],
+    });
+
+    const submit = (e) => {
+        e.preventDefault();
+        transform((form) => ({
+            ...form,
+            items: transformPurchaseInvoiceItems(form.items),
+        }));
+        post(route('purchase-invoices.store'));
+    };
+
+    return (
+        <AuthenticatedLayout
+            header={
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h1 className="text-2xl font-bold text-gray-900">New purchase invoice</h1>
+                        <p className="mt-1 text-sm text-gray-500">Save as draft, then receive to add stock.</p>
+                    </div>
+                    <Link
+                        href={route('purchase-invoices.index')}
+                        className="inline-flex h-10 items-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
+                    >
+                        Back to list
+                    </Link>
+                </div>
+            }
+        >
+            <Head title="New purchase invoice" />
+
+            {flash?.error && (
+                <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                    {flash.error}
+                </div>
+            )}
+
+            <div className="overflow-hidden rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+                <PurchaseInvoiceForm
+                    suppliers={suppliers}
+                    branches={branches}
+                    warehouses={warehouses}
+                    products={products}
+                    variants={variants}
+                    batches={batches}
+                    data={data}
+                    setData={setData}
+                    errors={errors}
+                    processing={processing}
+                    submitLabel="Save invoice"
+                    onSubmit={submit}
+                />
+            </div>
+        </AuthenticatedLayout>
+    );
+}

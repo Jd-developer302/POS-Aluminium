@@ -1,0 +1,1 @@
+function c(n){if(n==null||n==="")return"—";const t=String(n),r=(t.includes("T")||t.length>=10?t.slice(0,10):t).match(/^(\d{4})-(\d{2})-(\d{2})$/);return r?`${r[3]}-${r[2]}-${r[1]}`:t}function s(n){if(n==null||n==="")return"—";const t=String(n),e=c(t);if(!t.includes("T"))return e;const r=t.slice(11,16);return`${e} ${r}`}export{c as a,s as f};
