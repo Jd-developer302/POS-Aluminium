@@ -141,10 +141,7 @@ export default function Index({ taxes }) {
     const canView =
         perms.includes('taxes.view') || perms.includes('settings.taxes');
 
-    const destroy = (slug, name) => {
-        if (!window.confirm(`Delete tax "${name}"?`)) {
-            return;
-        }
+    const destroy = (slug, _name) => {
         router.delete(route('taxes.destroy', slug));
     };
 

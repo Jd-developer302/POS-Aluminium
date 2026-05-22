@@ -176,6 +176,7 @@ Route::middleware('auth')->group(function () {
     Route::middleware(['verified', 'permission:customers.create'])->post('customers/quick-store', [CustomerController::class, 'quickStore'])->name('customers.quick-store');
     Route::middleware(['verified', 'permission:customers.edit'])->get('customers/{customer}/edit', [CustomerController::class, 'edit'])->name('customers.edit');
     Route::middleware(['verified', 'permission:customers.edit'])->put('customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
+    Route::middleware(['verified', 'permission:customers.delete'])->delete('customers/{customer}', [CustomerController::class, 'destroy'])->name('customers.destroy');
     Route::middleware(['verified', 'permission:customers.view'])->get('customer-receivables', [CustomerReceivableController::class, 'index'])->name('customer-receivables.index');
     Route::middleware(['verified', 'role_or_permission:reports.view|customers.view'])->get('customer-receivables/ledger', [CustomerLedgerController::class, 'show'])->name('customer-receivables.ledger');
     Route::middleware(['verified', 'role_or_permission:reports.view|customers.view'])->get('customer-receivables/ledger/pdf', [CustomerLedgerController::class, 'pdf'])->name('customer-receivables.ledger.pdf');

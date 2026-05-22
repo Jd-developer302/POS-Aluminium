@@ -79,7 +79,7 @@ function typeBadgeClass(type) {
             return 'bg-amber-500 text-white';
         case 'simple':
         default:
-            return 'bg-emerald-500 text-white';
+            return 'bg-sky-900 text-white';
     }
 }
 
@@ -259,10 +259,7 @@ export default function Index({
         );
     };
 
-    const destroy = (slug, name) => {
-        if (!window.confirm(`Delete product "${name}"?`)) {
-            return;
-        }
+    const destroy = (slug, _name) => {
         router.delete(route('products.destroy', slug));
     };
 

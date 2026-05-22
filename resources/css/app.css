@@ -11,10 +11,6 @@
     .scrollbar-hidden::-webkit-scrollbar {
         display: none;
     }
-    .bg-brand {
-        --tw-bg-opacity: 1;
-        background-color: rgb(0 150 109 / var(--tw-bg-opacity, 1));
-    }
 }
 
 /* Printable invoices / receipts — slightly larger, readable type */

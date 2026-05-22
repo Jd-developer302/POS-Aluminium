@@ -119,10 +119,7 @@ export default function Index({ departments, branches, filters: filtersProp }) {
         router.get(route('departments.index'));
     };
 
-    const destroy = (slug, name) => {
-        if (!window.confirm(`Delete department "${name}"?`)) {
-            return;
-        }
+    const destroy = (slug, _name) => {
         router.delete(route('departments.destroy', slug));
     };
 

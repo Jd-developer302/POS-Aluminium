@@ -221,10 +221,7 @@ export default function Index({ employees, branches, departments, designations, 
         router.get(route('employees.index'));
     };
 
-    const destroy = (employeeId, name) => {
-        if (!window.confirm(`Delete employee "${name}"?`)) {
-            return;
-        }
+    const destroy = (employeeId, _name) => {
         router.delete(route('employees.destroy', employeeId));
     };
 

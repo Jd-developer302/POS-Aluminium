@@ -1,0 +1,1 @@
+import{a as o,b as l,z as u}from"./app-CxZdlVY0.js";function n(){const r=o(),s=r.props.flash;return l.useEffect(()=>{const e=s?.success!=null&&s.success!==""?String(s.success):null,c=s?.error!=null&&s.error!==""?String(s.error):null;e&&u.success(e,{id:`success:${e}:${r.url}`}),c&&u.error(c,{id:`error:${c}:${r.url}`})},[s?.success,s?.error,r.url]),null}export{n as F};

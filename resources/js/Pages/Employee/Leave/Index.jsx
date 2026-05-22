@@ -196,23 +196,14 @@ export default function Index({ leaves, employees, leaveTypes, branches, filters
     };
 
     const approve = (id) => {
-        if (!window.confirm('Approve this leave request?')) {
-            return;
-        }
         router.post(route('leaves.approve', id), {}, { preserveScroll: true });
     };
 
     const reject = (id) => {
-        if (!window.confirm('Reject this leave request?')) {
-            return;
-        }
         router.post(route('leaves.reject', id), {}, { preserveScroll: true });
     };
 
     const remove = (id) => {
-        if (!window.confirm('Delete this leave request?')) {
-            return;
-        }
         router.delete(route('leaves.destroy', id), { preserveScroll: true });
     };
 
@@ -416,7 +407,7 @@ export default function Index({ leaves, employees, leaveTypes, branches, filters
                                                         <button
                                                             type="button"
                                                             onClick={() => approve(row.id)}
-                                                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-emerald-700 hover:bg-emerald-50"
+                                                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-sky-900 hover:bg-sky-50"
                                                             title="Approve"
                                                         >
                                                             <IconCheck className="h-4 w-4" />

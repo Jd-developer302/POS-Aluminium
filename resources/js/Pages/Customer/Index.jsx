@@ -96,7 +96,6 @@ export default function Index({ customers, filters: filtersProp }) {
         if (!canDelete) return;
         const linked = (row.sales_count ?? 0) + (row.sale_returns_count ?? 0) > 0;
         if (linked) return;
-        if (!window.confirm(`Delete customer "${row.name}"?`)) return;
         router.delete(route('customers.destroy', row.id));
     };
 

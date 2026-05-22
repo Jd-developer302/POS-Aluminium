@@ -49,13 +49,6 @@ export default function Index({ sales }) {
     const canDeleteSale = !perms.length || perms.includes('sales.delete');
 
     const deleteSale = (sale) => {
-        if (
-            !window.confirm(
-                `Delete invoice ${sale.sale_number}? If it was completed, stock will be restored to the warehouse.`,
-            )
-        ) {
-            return;
-        }
         router.delete(route('sales.destroy', sale.id), { preserveScroll: true });
     };
 

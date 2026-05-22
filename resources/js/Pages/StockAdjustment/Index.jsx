@@ -24,7 +24,6 @@ export default function Index({ adjustments }) {
     const { flash } = usePage().props;
 
     const destroyRow = (row) => {
-        if (!confirm('Delete this adjustment?')) return;
         router.delete(route('stock-adjustments.destroy', row.id), { preserveScroll: true });
     };
 

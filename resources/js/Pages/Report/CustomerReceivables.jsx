@@ -139,13 +139,6 @@ export default function CustomerReceivables({
     const opts = filterOptions;
 
     const deleteSale = (sale) => {
-        if (
-            !window.confirm(
-                `Delete invoice ${sale.sale_number}? If it was completed, stock will be restored to the warehouse.`,
-            )
-        ) {
-            return;
-        }
         router.delete(route('sales.destroy', sale.id), { preserveScroll: true });
     };
 

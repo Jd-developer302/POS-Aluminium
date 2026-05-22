@@ -17,12 +17,12 @@ export default {
             },
             colors: {
                 brand: {
-                    DEFAULT: '#00966d',
-                    dark: '#007a59',
-                    light: '#00b386',
+                    DEFAULT: '#0c4a6e',
+                    dark: '#082f49',
+                    light: '#0369a1',
                     surface: '#f8fafc',
-                    muted: 'rgba(0, 150, 109, 0.12)',
-                    'on-muted': '#0d4a3a',
+                    muted: 'rgba(12, 74, 110, 0.12)',
+                    'on-muted': '#0c4a6e',
                 },
             },
             transitionDuration: {

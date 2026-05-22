@@ -125,10 +125,7 @@ export default function Index({ branches }) {
     const { flash, auth } = usePage().props;
     const perms = auth?.user?.permissions ?? [];
 
-    const destroy = (id, name) => {
-        if (!window.confirm(`Delete branch "${name}"?`)) {
-            return;
-        }
+    const destroy = (id, _name) => {
         router.delete(route('branches.destroy', id));
     };
 

@@ -371,10 +371,7 @@ export default function Index({ attendances, employees, branches, filters: filte
         });
     };
 
-    const destroy = (id, dateLabel) => {
-        if (!window.confirm(`Remove attendance for ${dateLabel}?`)) {
-            return;
-        }
+    const destroy = (id, _dateLabel) => {
         router.delete(route('attendances.destroy', id), { preserveScroll: true });
     };
 

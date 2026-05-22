@@ -131,7 +131,7 @@ export default function BranchLogoDropzone({
                 {showPreview ? (
                     <div className="flex max-h-full min-h-0 w-full flex-col items-center justify-center gap-1.5 overflow-hidden px-1">
                         <div className="relative shrink-0">
-                            <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-white shadow ring-1 ring-white">
+                            <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-sky-900 text-[9px] font-bold text-white shadow ring-1 ring-white">
                                 ✓
                             </span>
                             <img

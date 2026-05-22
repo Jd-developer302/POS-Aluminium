@@ -15,7 +15,6 @@ export default function Show({ quotation }) {
     const displayRows = useMemo(() => expandQuotationItemsForDisplay(items), [items]);
 
     const destroyQ = () => {
-        if (!confirm('Delete this quotation?')) return;
         router.delete(route('quotations.destroy', quotation.id));
     };
 
@@ -29,7 +28,7 @@ export default function Show({ quotation }) {
                     <div className="flex flex-wrap gap-2">
                         <a
                             href={pdfHref}
-                            className="inline-flex rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+                            className="inline-flex rounded-lg border border-sky-950 bg-sky-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-sky-950"
                         >
                             Download PDF
                         </a>

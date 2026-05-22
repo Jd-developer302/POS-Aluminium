@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Head, Link, router, usePage } from '@inertiajs/react';
+import toast from 'react-hot-toast';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import CustomerFilterCombobox from '@/Components/CustomerFilterCombobox';
 import ProductFilterCombobox from '@/Components/ProductFilterCombobox';
@@ -224,14 +225,6 @@ export default function Show({
     };
 
     const deleteSaleRow = (row) => {
-        const saleNumber = row.sale_number ?? row.id;
-        if (
-            !window.confirm(
-                `Delete invoice ${saleNumber}? If it was completed, stock will be restored to the warehouse.`,
-            )
-        ) {
-            return;
-        }
         router.delete(route('sales.destroy', row.id), {
             preserveScroll: true,
             onSuccess: () => {
@@ -248,10 +241,6 @@ export default function Show({
         if (String(row.status ?? '') === 'converted') {
             return;
         }
-        const quotationNo = row.quotation_no ?? row.id;
-        if (!window.confirm(`Delete quotation ${quotationNo}?`)) {
-            return;
-        }
         router.delete(route('quotations.destroy', row.id), {
             preserveScroll: true,
             onSuccess: () => {
@@ -266,10 +255,6 @@ export default function Show({
 
     const deleteInventoryMovementRow = (row) => {
         const rowId = reportRowNumericId(row);
-        const ref = row.reference || rowId;
-        if (!window.confirm(`Delete inventory movement #${rowId}${ref ? ` (${ref})` : ''}?`)) {
-            return;
-        }
         router.delete(route('inventory-movements.destroy', rowId), {
             preserveScroll: true,
             onSuccess: () => {
@@ -286,12 +271,9 @@ export default function Show({
         const rowId = reportRowNumericId(row);
         const invoiceNo = row.invoice_number ?? rowId;
         if (String(row.status ?? '') === 'received') {
-            window.alert(
+            toast.error(
                 `Purchase invoice ${invoiceNo} cannot be deleted because it is already received (stock was updated).`,
             );
-            return;
-        }
-        if (!window.confirm(`Delete purchase invoice ${invoiceNo}? This cannot be undone.`)) {
             return;
         }
         router.delete(route('purchase-invoices.destroy', rowId), {
@@ -308,10 +290,6 @@ export default function Show({
 
     const deletePoNotificationRow = (row) => {
         const rowId = reportRowNumericId(row);
-        const orderNo = row.order_number ?? rowId;
-        if (!window.confirm(`Delete notification log #${rowId} for order ${orderNo}?`)) {
-            return;
-        }
         router.delete(route('purchase-order-notification-logs.destroy', rowId), {
             preserveScroll: true,
             onSuccess: () => {
@@ -329,15 +307,6 @@ export default function Show({
             return;
         }
         const lineId = reportRowNumericId(row);
-        const quotationNo = row.quotation_no ?? row.quotation_id;
-        const product = row.product ?? 'line';
-        if (
-            !window.confirm(
-                `Delete line #${lineId} (${product}) from quotation ${quotationNo}? Quotation totals will be updated.`,
-            )
-        ) {
-            return;
-        }
         router.delete(route('quotation-items.destroy', lineId), {
             preserveScroll: true,
             onSuccess: () => {

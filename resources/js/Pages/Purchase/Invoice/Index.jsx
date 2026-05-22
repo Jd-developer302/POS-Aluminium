@@ -42,9 +42,6 @@ export default function Index({ invoices }) {
 
     const confirmDelete = (inv) => {
         if (!canModifyInvoice(inv)) return;
-        if (!window.confirm(`Delete purchase invoice ${inv.invoice_number}? This cannot be undone.`)) {
-            return;
-        }
         router.delete(route('purchase-invoices.destroy', inv.id));
     };
 

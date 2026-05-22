@@ -110,7 +110,7 @@ export default function Register() {
                         Already registered?
                     </Link>
 
-                    <PrimaryButton className="ms-4 bg-brand hover:bg-brand text-white" disabled={processing}>
+                    <PrimaryButton className="ms-4 bg-brand hover:bg-brand-dark text-white" disabled={processing}>
                         Register
                     </PrimaryButton>
                 </div>

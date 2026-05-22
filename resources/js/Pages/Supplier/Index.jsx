@@ -86,13 +86,6 @@ export default function Index({ suppliers, filters: filtersProp }) {
 
     const destroy = (row) => {
         if (!canDelete) return;
-        if (
-            !window.confirm(
-                `Delete supplier "${row.name}"? This is only allowed if there are no purchase invoices.`,
-            )
-        ) {
-            return;
-        }
         router.delete(route('suppliers.destroy', row.id));
     };
 

@@ -129,10 +129,7 @@ export default function Index({ designations, branches, departments, filters: fi
         router.get(route('designations.index'));
     };
 
-    const destroy = (slug, name) => {
-        if (!window.confirm(`Delete designation "${name}"?`)) {
-            return;
-        }
+    const destroy = (slug, _name) => {
         router.delete(route('designations.destroy', slug));
     };
 

@@ -283,9 +283,6 @@ export default function Index({ leaveBalances, employees, leaveTypes, branches, 
                                             <button
                                                 type="button"
                                                 onClick={() => {
-                                                    if (!window.confirm('Remove this leave balance?')) {
-                                                        return;
-                                                    }
                                                     router.delete(route('leave-balances.destroy', row.id), {
                                                         preserveScroll: true,
                                                     });

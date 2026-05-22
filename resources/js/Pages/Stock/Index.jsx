@@ -225,7 +225,6 @@ export default function Index({
     };
 
     const destroyRow = (row) => {
-        if (!confirm('Delete this stock row?')) return;
         router.delete(route('stocks.destroy', row.id), { preserveScroll: true });
     };
 

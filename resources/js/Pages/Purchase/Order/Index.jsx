@@ -53,9 +53,6 @@ export default function Index({ orders }) {
 
     const confirmDelete = (o) => {
         if (!canDeleteOrder(o)) return;
-        if (!window.confirm(`Delete purchase order ${o.order_number}? This cannot be undone.`)) {
-            return;
-        }
         router.delete(route('purchase-orders.destroy', o.id));
     };
 

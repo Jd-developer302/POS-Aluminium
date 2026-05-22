@@ -125,10 +125,7 @@ export default function Index({ categories }) {
     const { flash, auth } = usePage().props;
     const perms = auth?.user?.permissions ?? [];
 
-    const destroy = (slug, name) => {
-        if (!window.confirm(`Delete category "${name}"?`)) {
-            return;
-        }
+    const destroy = (slug, _name) => {
         router.delete(route('categories.destroy', slug));
     };
 

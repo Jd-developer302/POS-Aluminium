@@ -125,10 +125,7 @@ export default function Index({ warehouses }) {
     const { flash, auth } = usePage().props;
     const perms = auth?.user?.permissions ?? [];
 
-    const destroy = (id, name) => {
-        if (!window.confirm(`Delete warehouse "${name}"?`)) {
-            return;
-        }
+    const destroy = (id, _name) => {
         router.delete(route('warehouses.destroy', id));
     };
 

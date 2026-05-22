@@ -66,7 +66,6 @@ export default function Index({ product, serials }) {
     const { flash } = usePage().props;
 
     const destroyRow = (row) => {
-        if (!confirm('Delete this serial?')) return;
         router.delete(route('products.serials.destroy', [product.slug, row.id]), {
             preserveScroll: true,
         });

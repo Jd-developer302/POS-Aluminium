@@ -75,7 +75,6 @@ export default function Index({ product, variants, batches }) {
     const hasVariants = (variants?.length ?? 0) > 0 && product?.type === 'variable';
 
     const destroyRow = (row) => {
-        if (!confirm('Delete this batch?')) return;
         router.delete(route('products.batches.destroy', [product.slug, row.id]), {
             preserveScroll: true,
         });

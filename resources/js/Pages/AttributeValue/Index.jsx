@@ -38,8 +38,7 @@ function Pagination({ links }) {
 export default function Index({ attributeValues }) {
     const { flash } = usePage().props;
 
-    const destroy = (slug, value) => {
-        if (!window.confirm(`Delete value "${value}"?`)) return;
+    const destroy = (slug, _value) => {
         router.delete(route('attribute-values.destroy', slug));
     };
 

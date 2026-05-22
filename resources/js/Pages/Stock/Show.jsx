@@ -29,7 +29,6 @@ export default function Show({ stock }) {
     const { flash } = usePage().props;
 
     const destroyRow = () => {
-        if (!confirm('Delete this stock row?')) return;
         router.delete(route('stocks.destroy', stock.id));
     };
 

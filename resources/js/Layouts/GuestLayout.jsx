@@ -1,3 +1,4 @@
+import FlashToastListener from '@/Components/FlashToastListener';
 import ApplicationLogo from '@/Components/ApplicationLogo';
 import { Head, Link, usePage } from '@inertiajs/react';
 
@@ -6,6 +7,7 @@ export default function GuestLayout({ children }) {
 
     return (
         <div className="flex min-h-screen flex-col items-center bg-brand pt-6 sm:justify-center sm:pt-0">
+            <FlashToastListener />
             {branding?.favicon_url ? (
                 <Head>
                     <link rel="icon" href={branding.favicon_url} />

@@ -12,16 +12,10 @@ export default function Show({ saleReturn: r }) {
     const completeForm = useForm({});
 
     const onComplete = () => {
-        if (!window.confirm('Complete this return and add stock to the warehouse?')) {
-            return;
-        }
         completeForm.post(route('sale-returns.complete', r.id));
     };
 
     const onDelete = () => {
-        if (!window.confirm('Delete this pending return?')) {
-            return;
-        }
         router.delete(route('sale-returns.destroy', r.id), { preserveScroll: true });
     };
 
@@ -51,7 +45,7 @@ export default function Show({ saleReturn: r }) {
                                     type="button"
                                     onClick={onComplete}
                                     disabled={completeForm.processing}
-                                    className={btn + ' border-transparent bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50'}
+                                    className={btn + ' border-transparent bg-sky-900 text-white hover:bg-sky-950 disabled:opacity-50'}
                                 >
                                     Complete (restock)
                                 </button>

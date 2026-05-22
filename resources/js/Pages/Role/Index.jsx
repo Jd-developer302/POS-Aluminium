@@ -124,14 +124,7 @@ function Pagination({ links }) {
 export default function Index({ roles }) {
     const { flash } = usePage().props;
 
-    const destroy = (id, name) => {
-        if (
-            !window.confirm(
-                `Delete role "${name}"? This cannot be undone if no users use it.`,
-            )
-        ) {
-            return;
-        }
+    const destroy = (id, _name) => {
         router.delete(route('roles.destroy', id));
     };
 

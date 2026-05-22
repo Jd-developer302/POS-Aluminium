@@ -125,10 +125,7 @@ export default function Index({ subCategories }) {
     const { flash, auth } = usePage().props;
     const perms = auth?.user?.permissions ?? [];
 
-    const destroy = (slug, name) => {
-        if (!window.confirm(`Delete subcategory "${name}"?`)) {
-            return;
-        }
+    const destroy = (slug, _name) => {
         router.delete(route('sub-categories.destroy', slug));
     };
 

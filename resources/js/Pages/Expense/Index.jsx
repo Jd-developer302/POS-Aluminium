@@ -166,9 +166,6 @@ export default function Index({
     const canDelete = hasExpenseAccess;
 
     const destroy = (id) => {
-        if (!window.confirm('Delete this expense?')) {
-            return;
-        }
         router.delete(route('expenses.destroy', id));
     };
 

@@ -110,10 +110,7 @@ export default function Index({ categories }) {
         perms.includes('expenses.edit') ||
         perms.includes('expenses.delete');
 
-    const destroy = (id, name) => {
-        if (!window.confirm(`Delete category "${name}"?`)) {
-            return;
-        }
+    const destroy = (id, _name) => {
         router.delete(route('expense-categories.destroy', id));
     };
 

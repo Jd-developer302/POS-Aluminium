@@ -125,14 +125,7 @@ export default function Index({ users }) {
     const { flash, auth } = usePage().props;
     const currentUserId = auth?.user?.id;
 
-    const destroy = (id, name) => {
-        if (
-            !window.confirm(
-                `Delete user "${name}"? This cannot be undone.`,
-            )
-        ) {
-            return;
-        }
+    const destroy = (id, _name) => {
         router.delete(route('users.destroy', id));
     };
 

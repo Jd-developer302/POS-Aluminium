@@ -110,10 +110,7 @@ export default function Index({ leaveTypes, filters: filtersProp }) {
         router.get(route('leave-types.index'));
     };
 
-    const destroy = (slug, name) => {
-        if (!window.confirm(`Delete leave type "${name}"?`)) {
-            return;
-        }
+    const destroy = (slug, _name) => {
         router.delete(route('leave-types.destroy', slug));
     };
 

@@ -41,7 +41,6 @@ export default function Index({ quotations }) {
     const { flash } = usePage().props;
 
     const destroyRow = (row) => {
-        if (!confirm('Delete this quotation?')) return;
         router.delete(route('quotations.destroy', row.id), { preserveScroll: true });
     };
 

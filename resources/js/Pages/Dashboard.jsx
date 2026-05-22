@@ -27,8 +27,8 @@ const EMPTY_PERIODS = {
     yearly: [],
 };
 
-/** Matches sidebar `bg-brand` (tailwind `brand.DEFAULT`). */
-const CHART_BRAND_STROKE = '#00966d';
+/** Matches primary UI / tailwind `brand.DEFAULT` (sky-900). */
+const CHART_BRAND_STROKE = '#0c4a6e';
 
 function formatYAxis(n) {
     if (n === 0) return '0';
@@ -545,7 +545,7 @@ export default function Dashboard({
                         </h2>
                         <Link
                             href={route('employees.create')}
-                            className="inline-flex items-center justify-center rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+                            className="inline-flex items-center justify-center rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-dark focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
                         >
                             + Add Employee
                         </Link>
@@ -835,7 +835,7 @@ export default function Dashboard({
                                         pay_year: payYearDraft,
                                     })
                                 }
-                                className="inline-flex h-10 items-center justify-center rounded-lg bg-brand px-5 text-sm font-medium text-white shadow-sm transition hover:bg-brand focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+                                className="inline-flex h-10 items-center justify-center rounded-lg bg-brand px-5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-dark focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
                             >
                                 Calculate
                             </button>

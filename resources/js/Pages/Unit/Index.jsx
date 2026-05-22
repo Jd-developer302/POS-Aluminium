@@ -125,10 +125,7 @@ export default function Index({ units }) {
     const { flash, auth } = usePage().props;
     const perms = auth?.user?.permissions ?? [];
 
-    const destroy = (slug, name) => {
-        if (!window.confirm(`Delete unit "${name}"?`)) {
-            return;
-        }
+    const destroy = (slug, _name) => {
         router.delete(route('units.destroy', slug));
     };
 

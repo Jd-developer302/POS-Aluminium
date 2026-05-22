@@ -84,7 +84,7 @@ export default function ResetPassword({ token, email }) {
                 </div>
 
                 <div className="mt-4 flex items-center justify-end">
-                    <PrimaryButton className="ms-4 bg-brand hover:bg-brand text-white" disabled={processing}>
+                    <PrimaryButton className="ms-4 bg-brand hover:bg-brand-dark text-white" disabled={processing}>
                         Reset Password
                     </PrimaryButton>
                 </div>

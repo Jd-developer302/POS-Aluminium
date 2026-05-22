@@ -39,7 +39,6 @@ export default function Show({ order }) {
     };
 
     const markCancelled = () => {
-        if (!window.confirm('Cancel this purchase order?')) return;
         cancelledForm.post(route('purchase-orders.mark-cancelled', order.id));
     };
 
@@ -258,7 +257,7 @@ export default function Show({ order }) {
                         <div className="mt-6 flex flex-wrap justify-end gap-3">
                             <a
                                 href={pdfHref}
-                                className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+                                className="inline-flex items-center gap-2 rounded-lg border border-sky-950 bg-sky-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-950"
                             >
                                 Download PDF
                             </a>

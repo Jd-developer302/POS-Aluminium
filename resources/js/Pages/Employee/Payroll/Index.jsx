@@ -168,9 +168,6 @@ export default function Index({ payrolls, employees, branches, years, filters: f
     };
 
     const destroy = (id) => {
-        if (!window.confirm('Delete this payroll record?')) {
-            return;
-        }
         router.delete(route('payrolls.destroy', id), { preserveScroll: true });
     };
 

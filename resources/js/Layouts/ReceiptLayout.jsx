@@ -1,3 +1,4 @@
+import FlashToastListener from '@/Components/FlashToastListener';
 import { Head, usePage } from '@inertiajs/react';
 
 /**
@@ -8,6 +9,7 @@ export default function ReceiptLayout({ children }) {
 
     return (
         <>
+            <FlashToastListener />
             <Head>
                 {faviconHref ? <link rel="icon" href={faviconHref} /> : null}
                 <style type="text/css">
