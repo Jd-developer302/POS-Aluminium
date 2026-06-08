@@ -45,14 +45,20 @@ function buildQuery(filters) {
     return out;
 }
 
-function formatQty(value) {
-    if (value === null || value === undefined || value === '') return '—';
-    const n = Number(value);
-    if (Number.isNaN(n)) return String(value);
-    return n.toLocaleString(undefined, {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 4,
-    });
+function movementBillingMode(m) {
+    return m?.billing_mode ?? 'quantity';
+}
+
+function isLengthMovement(m) {
+    return movementBillingMode(m) === 'length_ft';
+}
+
+function isAreaMovement(m) {
+    return movementBillingMode(m) === 'area_sqft';
+}
+
+function isCutMovement(m) {
+    return isLengthMovement(m) || isAreaMovement(m);
 }
 
 const SOURCE_TYPE_LABELS = {
@@ -101,6 +107,42 @@ export default function Index({ movements, filters: filtersProp, branches, wareh
     }, [warehouses]);
 
     const availableWarehouses = whByBranch.get(String(branchId)) ?? warehouses ?? [];
+
+    const showVariantColumn = useMemo(
+        () => (movements?.data ?? []).some((m) => m.variant_label || m.product_variant_id),
+        [movements?.data],
+    );
+
+    const cutsColumnHeader = useMemo(() => {
+        const rows = movements?.data ?? [];
+        if (rows.length === 0) {
+            return 'Cuts (L×Q / W×H×Q)';
+        }
+        if (rows.every(isAreaMovement)) {
+            return 'Sizes (W×H×Q)';
+        }
+        if (rows.every(isLengthMovement)) {
+            return 'Lengths (L×Q)';
+        }
+        if (rows.some(isCutMovement)) {
+            return 'Cuts / sizes';
+        }
+        return 'Cuts (L×Q / W×H×Q)';
+    }, [movements?.data]);
+
+    const qtyColumnHeader = useMemo(() => {
+        const rows = movements?.data ?? [];
+        if (rows.every(isAreaMovement)) {
+            return 'Qty (sq ft)';
+        }
+        if (rows.every(isLengthMovement)) {
+            return 'Qty (ft)';
+        }
+        if (rows.some(isCutMovement)) {
+            return 'Qty (ft / sq ft)';
+        }
+        return 'Qty';
+    }, [movements?.data]);
 
     const run = (e) => {
         e?.preventDefault();
@@ -254,9 +296,13 @@ export default function Index({ movements, filters: filtersProp, branches, wareh
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Time</th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Dir</th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Product</th>
+                                {showVariantColumn && (
+                                    <th className="px-4 py-3 text-start font-semibold text-gray-700">Variant</th>
+                                )}
+                                <th className="px-4 py-3 text-start font-semibold text-gray-700">{cutsColumnHeader}</th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Branch</th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Warehouse</th>
-                                <th className="px-4 py-3 text-start font-semibold text-gray-700">Qty</th>
+                                <th className="px-4 py-3 text-start font-semibold text-gray-700">{qtyColumnHeader}</th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Before</th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">After</th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Source</th>
@@ -267,7 +313,7 @@ export default function Index({ movements, filters: filtersProp, branches, wareh
                         <tbody className="divide-y divide-gray-100 bg-white">
                             {movements.data.length === 0 ? (
                                 <tr>
-                                    <td colSpan={11} className="px-4 py-8 text-center text-gray-500">
+                                    <td colSpan={showVariantColumn ? 13 : 12} className="px-4 py-8 text-center text-gray-500">
                                         No movements found.
                                     </td>
                                 </tr>
@@ -290,13 +336,24 @@ export default function Index({ movements, filters: filtersProp, branches, wareh
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 font-medium text-gray-900">{m.product?.name ?? `#${m.product_id}`}</td>
+                                        {showVariantColumn && (
+                                            <td className="px-4 py-3 text-gray-700">
+                                                {m.variant_label ??
+                                                    (m.product_varient?.sku
+                                                        ? `${m.product_varient.sku} — ${m.product_varient.name ?? ''}`
+                                                        : m.product_varient?.name ?? '—')}
+                                            </td>
+                                        )}
+                                        <td className="max-w-[16rem] px-4 py-3 text-gray-700">
+                                            {m.cuts_summary && m.cuts_summary !== '—' ? m.cuts_summary : '—'}
+                                        </td>
                                         <td className="px-4 py-3 text-gray-700">{m.branch?.name ?? '—'}</td>
                                         <td className="px-4 py-3 text-gray-700">{m.warehouse?.name ?? '—'}</td>
                                         <td className="px-4 py-3 font-semibold text-gray-900">
-                                            {formatQty(m.quantity)}
+                                            {m.quantity_label ?? m.quantity}
                                         </td>
-                                        <td className="px-4 py-3 text-gray-700">{formatQty(m.before_qty)}</td>
-                                        <td className="px-4 py-3 text-gray-700">{formatQty(m.after_qty)}</td>
+                                        <td className="px-4 py-3 text-gray-700">{m.before_qty_label ?? m.before_qty}</td>
+                                        <td className="px-4 py-3 text-gray-700">{m.after_qty_label ?? m.after_qty}</td>
                                         <td className="px-4 py-3 text-gray-700">
                                             {formatSourceType(m.source_type)}
                                         </td>

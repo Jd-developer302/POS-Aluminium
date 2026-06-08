@@ -1,6 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import {
+    saleReturnCutsSummary,
+    saleReturnQtyLabel,
+    saleReturnTableHeaders,
+    saleReturnUnitPriceLabel,
+    saleReturnVariantLabel,
+} from '@/lib/saleReturnLineDisplay';
 
 function useErrors() {
     return usePage().props.errors ?? {};
@@ -24,6 +31,9 @@ export default function Create({ sales, selectedSale, warehouses }) {
         reason: '',
         items: [],
     });
+
+    const saleLines = selectedSale?.items ?? [];
+    const tableHeaders = useMemo(() => saleReturnTableHeaders(saleLines), [saleLines]);
 
     useEffect(() => {
         if (!selectedSale) {
@@ -113,7 +123,7 @@ export default function Create({ sales, selectedSale, warehouses }) {
                 </div>
             )}
 
-            <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
+            <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
                 <div className="overflow-hidden rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
                     <form onSubmit={submit} className="space-y-6">
                         <div>
@@ -130,7 +140,8 @@ export default function Create({ sales, selectedSale, warehouses }) {
                                 <option value="">— Select sale —</option>
                                 {(sales || []).map((s) => (
                                     <option key={s.id} value={s.id}>
-                                        {s.sale_number} — {s.total} ({s.sale_date ? String(s.sale_date).slice(0, 10) : ''})
+                                        {s.sale_number} — {s.total} (
+                                        {s.sale_date ? String(s.sale_date).slice(0, 10) : ''})
                                     </option>
                                 ))}
                             </select>
@@ -182,37 +193,72 @@ export default function Create({ sales, selectedSale, warehouses }) {
                                 </div>
 
                                 <p className="text-sm text-gray-600">
-                                    Sale: <span className="font-semibold">{selectedSale.sale_number}</span> — return qty
-                                    cannot exceed &quot;remaining&quot; per line.
+                                    Sale: <span className="font-semibold">{selectedSale.sale_number}</span> — return
+                                    cannot exceed &quot;remaining&quot; per line (units, ft, or sq ft by product type).
                                 </p>
 
                                 <div className="overflow-x-auto rounded-lg border border-gray-200">
                                     <table className="min-w-full divide-y divide-gray-200 text-sm">
                                         <thead className="bg-gray-50">
                                             <tr>
-                                                <th className="px-3 py-2 text-start font-semibold text-gray-700">Product</th>
-                                                <th className="px-3 py-2 text-end font-semibold text-gray-700">Sold</th>
-                                                <th className="px-3 py-2 text-end font-semibold text-gray-700">Remaining</th>
-                                                <th className="px-3 py-2 text-end font-semibold text-gray-700">Unit</th>
-                                                <th className="px-3 py-2 text-end font-semibold text-gray-700">Return qty</th>
+                                                <th className="px-3 py-2 text-start font-semibold text-gray-700">
+                                                    Product
+                                                </th>
+                                                {tableHeaders.showVariant ? (
+                                                    <th className="px-3 py-2 text-start font-semibold text-gray-700">
+                                                        Variant
+                                                    </th>
+                                                ) : null}
+                                                {tableHeaders.showCuts ? (
+                                                    <th className="px-3 py-2 text-start font-semibold text-gray-700">
+                                                        {tableHeaders.cutsHeader}
+                                                    </th>
+                                                ) : null}
+                                                <th className="px-3 py-2 text-end font-semibold text-gray-700">
+                                                    {tableHeaders.soldHeader}
+                                                </th>
+                                                <th className="px-3 py-2 text-end font-semibold text-gray-700">
+                                                    {tableHeaders.remainingHeader}
+                                                </th>
+                                                <th className="px-3 py-2 text-end font-semibold text-gray-700">
+                                                    Unit price
+                                                </th>
+                                                <th className="px-3 py-2 text-end font-semibold text-gray-700">
+                                                    {tableHeaders.returnHeader}
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-100">
                                             {(data.items || []).map((row, idx) => {
-                                                const it = (selectedSale.items || []).find((x) => x.id === row.sale_item_id);
+                                                const it = saleLines.find((x) => x.id === row.sale_item_id);
                                                 if (!it) {
                                                     return null;
                                                 }
+                                                const mode = it.billing_mode ?? 'quantity';
                                                 return (
                                                     <tr key={row.sale_item_id}>
-                                                        <td className="px-3 py-2 text-gray-900">
+                                                        <td className="px-3 py-2 font-medium text-gray-900">
                                                             {it.product_name ?? it.product_id}
                                                         </td>
-                                                        <td className="px-3 py-2 text-end text-gray-600">{it.quantity_sold}</td>
-                                                        <td className="px-3 py-2 text-end font-medium text-amber-800">
-                                                            {it.remaining}
+                                                        {tableHeaders.showVariant ? (
+                                                            <td className="px-3 py-2 text-gray-700">
+                                                                {saleReturnVariantLabel(it)}
+                                                            </td>
+                                                        ) : null}
+                                                        {tableHeaders.showCuts ? (
+                                                            <td className="px-3 py-2 font-mono text-xs text-gray-700">
+                                                                {saleReturnCutsSummary(it)}
+                                                            </td>
+                                                        ) : null}
+                                                        <td className="px-3 py-2 text-end tabular-nums text-gray-600">
+                                                            {saleReturnQtyLabel(it.quantity_sold, mode)}
                                                         </td>
-                                                        <td className="px-3 py-2 text-end text-gray-700">{it.unit_price}</td>
+                                                        <td className="px-3 py-2 text-end font-medium tabular-nums text-amber-800">
+                                                            {saleReturnQtyLabel(it.remaining, mode)}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-end text-gray-700">
+                                                            {saleReturnUnitPriceLabel(it)}
+                                                        </td>
                                                         <td className="px-3 py-2 text-end">
                                                             <input
                                                                 type="number"

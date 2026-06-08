@@ -14,6 +14,8 @@ use App\Models\Setting;
 use App\Models\Stock;
 use App\Models\Supplier\Customer;
 use App\Services\InventoryService;
+use App\Support\BillingLineResolver;
+use App\Support\GlassAreaBillingPairs;
 use App\Support\LengthBillingPairs;
 use App\Support\StockLocator;
 use Illuminate\Http\RedirectResponse;
@@ -109,11 +111,14 @@ class SaleController extends Controller
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:products,id'],
             'items.*.product_variant_id' => ['nullable', 'exists:product_varients,id'],
-            'items.*.billing_mode' => ['nullable', Rule::in(['quantity', 'length_ft'])],
+            'items.*.billing_mode' => ['nullable', Rule::in(BillingLineResolver::allowedModes())],
             'items.*.length_pairs' => ['nullable', 'array'],
             'items.*.length_pairs.*.length' => ['nullable', 'numeric', 'min:0'],
+            'items.*.length_pairs.*.width' => ['nullable', 'numeric', 'min:0'],
+            'items.*.length_pairs.*.height' => ['nullable', 'numeric', 'min:0'],
             'items.*.length_pairs.*.qty' => ['nullable', 'numeric', 'min:0'],
             'items.*.rate_per_ft' => ['nullable', 'numeric', 'min:0'],
+            'items.*.rate_per_sqft' => ['nullable', 'numeric', 'min:0'],
             'items.*.discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'items.*.quantity' => ['required', 'numeric', 'min:0'],
             'items.*.unit_price' => ['required', 'numeric', 'min:0'],
@@ -152,29 +157,9 @@ class SaleController extends Controller
                 }
             }
 
-            $mode = $it['billing_mode'] ?? 'quantity';
-            if ($mode === 'length_ft') {
-                $pairsRaw = is_array($it['length_pairs'] ?? null) ? $it['length_pairs'] : [];
-                $pairs = LengthBillingPairs::normalizeLengthPairsForStorage($pairsRaw);
-                $totalFt = LengthBillingPairs::totalFeetFromLengthPairs($pairs);
-                if ($totalFt <= 0) {
-                    return redirect()
-                        ->back()
-                        ->withInput()
-                        ->with('error', 'Length billing: total feet must be greater than zero (check length × qty rows).');
-                }
-                $rate = (float) ($it['rate_per_ft'] ?? $it['unit_price'] ?? 0);
-                if ($rate <= 0) {
-                    return redirect()
-                        ->back()
-                        ->withInput()
-                        ->with('error', 'Length billing: rate per ft must be greater than zero.');
-                }
-            } elseif ((float) ($it['quantity'] ?? 0) < 0.0001) {
-                return redirect()
-                    ->back()
-                    ->withInput()
-                    ->with('error', 'Each line must have a quantity greater than zero (or use length billing).');
+            $err = BillingLineResolver::validateSaleQuotationItem($it);
+            if ($err !== null) {
+                return redirect()->back()->withInput()->with('error', $err);
             }
         }
 
@@ -220,27 +205,13 @@ class SaleController extends Controller
                         $taxRate = (float) $product->tax->rate;
                     }
 
-                    $billingMode = ($it['billing_mode'] ?? 'quantity') === 'length_ft' ? 'length_ft' : 'quantity';
-
-                    if ($billingMode === 'length_ft') {
-                        $pairs = is_array($it['length_pairs'] ?? null) ? $it['length_pairs'] : [];
-                        $normalizedPairs = LengthBillingPairs::normalizeLengthPairsForStorage($pairs);
-                        $totalFt = LengthBillingPairs::totalFeetFromLengthPairs($normalizedPairs);
-                        $rate = round((float) ($it['rate_per_ft'] ?? $it['unit_price'] ?? 0), 2);
-                        $gross = round($totalFt * $rate, 2);
-                        $pct = isset($it['discount_percent']) ? (float) $it['discount_percent'] : 0.0;
-                        $pct = min(100.0, max(0.0, $pct));
-                        $discountAmt = round($gross * $pct / 100, 2);
-                        $lineSubtotal = round(max(0.0, $gross - $discountAmt), 2);
-                        $qtyForStock = $totalFt;
-                        $unitPriceStored = $rate;
-                    } else {
-                        $normalizedPairs = null;
-                        $qtyForStock = (float) $it['quantity'];
-                        $unitPriceStored = (float) $it['unit_price'];
-                        $discountAmt = 0.0;
-                        $lineSubtotal = round($qtyForStock * $unitPriceStored, 2);
-                    }
+                    $resolved = BillingLineResolver::resolveSaleQuotationLine($it);
+                    $billingMode = $resolved['billing_mode'];
+                    $normalizedPairs = $resolved['length_pairs'];
+                    $qtyForStock = $resolved['quantity'];
+                    $unitPriceStored = $resolved['unit_price'];
+                    $lineSubtotal = $resolved['line_subtotal'];
+                    $discountAmt = $resolved['discount_amount'];
 
                     $subtotal += $lineSubtotal;
                     $discountTotal += $discountAmt;
@@ -545,6 +516,11 @@ class SaleController extends Controller
             $normalized = LengthBillingPairs::normalizeLengthPairsForStorage($raw);
             $lengthPairsSumFt = LengthBillingPairs::totalFeetFromLengthPairs($normalized);
             $lengthSummary = $this->lengthPairsSummaryForSale($raw);
+        } elseif ($billing === 'area_sqft') {
+            $raw = is_array($stock->length_pairs) ? $stock->length_pairs : [];
+            $normalized = GlassAreaBillingPairs::normalizeAreaPairsForStorage($raw);
+            $lengthPairsSumFt = GlassAreaBillingPairs::totalSqFtFromAreaPairs($normalized);
+            $lengthSummary = $this->areaPairsSummaryForSale($raw);
         }
 
         $variant = $stock->productVarient;
@@ -584,6 +560,31 @@ class SaleController extends Controller
                 continue;
             }
             $parts[] = $l.'×'.$q;
+        }
+
+        return $parts !== [] ? implode(' + ', $parts) : '';
+    }
+
+    /**
+     * @param  array<int, mixed>|null  $pairs
+     */
+    private function areaPairsSummaryForSale(?array $pairs): string
+    {
+        if (! is_array($pairs) || $pairs === []) {
+            return '';
+        }
+        $parts = [];
+        foreach ($pairs as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $w = (float) ($row['width'] ?? 0);
+            $h = (float) ($row['height'] ?? 0);
+            $q = (float) ($row['qty'] ?? 0);
+            if ($w <= 0 && $h <= 0 && $q <= 0) {
+                continue;
+            }
+            $parts[] = $w.'×'.$h.'×'.$q;
         }
 
         return $parts !== [] ? implode(' + ', $parts) : '';

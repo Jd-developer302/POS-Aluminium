@@ -22,7 +22,7 @@ export default function Edit({
 }) {
     const { data, setData, put, post, processing, errors, transform } = useForm({
         category_id: product.category_id,
-        sub_category_id: product.sub_category_id,
+        sub_category_id: product.sub_category_id ?? '',
         brand_id: product.brand_id,
         unit_id: product.unit_id,
         tax_id: product.tax_id,
@@ -61,6 +61,7 @@ export default function Edit({
             const next = {
                 ...form,
                 brand_id: form.brand_id || null,
+                sub_category_id: form.sub_category_id || null,
                 tax_id: form.tax_id || null,
                 barcode: null,
                 variants: isVariable
@@ -206,11 +207,7 @@ export default function Edit({
                                             onChange={(e) => {
                                                 const cid = e.target.value;
                                                 setData('category_id', cid);
-                                                const first = (subCategories ?? []).find(
-                                                    (s) =>
-                                                        String(s.category_id) === String(cid),
-                                                );
-                                                setData('sub_category_id', first?.id ?? '');
+                                                setData('sub_category_id', '');
                                             }}
                                         >
                                             {categories.map((c) => (
@@ -227,25 +224,22 @@ export default function Edit({
                                     <div>
                                         <InputLabel
                                             htmlFor="sub_category_id"
-                                            value="Sub category"
+                                            value="Sub category (optional)"
                                         />
                                         <select
                                             id="sub_category_id"
                                             className={selectClass}
-                                            value={data.sub_category_id}
+                                            value={data.sub_category_id ?? ''}
                                             onChange={(e) =>
                                                 setData('sub_category_id', e.target.value)
                                             }
                                         >
-                                            {subOptions.length === 0 ? (
-                                                <option value="">—</option>
-                                            ) : (
-                                                subOptions.map((s) => (
-                                                    <option key={s.id} value={s.id}>
-                                                        {s.name}
-                                                    </option>
-                                                ))
-                                            )}
+                                            <option value="">— None —</option>
+                                            {subOptions.map((s) => (
+                                                <option key={s.id} value={s.id}>
+                                                    {s.name}
+                                                </option>
+                                            ))}
                                         </select>
                                         <InputError
                                             className="mt-2"

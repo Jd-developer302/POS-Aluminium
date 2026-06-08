@@ -47,7 +47,12 @@ class SaleReturnController extends Controller
         if ($request->filled('sale_id')) {
             $sale = Sale::query()
                 ->where('status', 'completed')
-                ->with(['items.product:id,name,slug', 'branch:id,name', 'warehouse:id,name'])
+                ->with([
+                    'items.product:id,name,slug',
+                    'items.productVarient:id,product_id,name,sku',
+                    'branch:id,name',
+                    'warehouse:id,name',
+                ])
                 ->find($request->integer('sale_id'));
             if ($sale) {
                 $selectedSale = [
@@ -59,11 +64,24 @@ class SaleReturnController extends Controller
                     'warehouse_id' => $sale->warehouse_id,
                     'customer_id' => $sale->customer_id,
                     'items' => $sale->items->map(function (SaleItem $it) {
+                        $pv = $it->productVarient;
+                        $variantLabel = null;
+                        if ($pv) {
+                            $sku = trim((string) ($pv->sku ?? ''));
+                            $name = trim((string) ($pv->name ?? ''));
+                            $variantLabel = $sku && $name
+                                ? "{$sku} — {$name}"
+                                : ($sku ?: $name ?: null);
+                        }
+
                         return [
                             'id' => $it->id,
                             'product_id' => $it->product_id,
                             'product_name' => $it->product?->name,
                             'product_variant_id' => $it->product_variant_id,
+                            'variant_label' => $variantLabel,
+                            'billing_mode' => $it->billing_mode ?? 'quantity',
+                            'length_pairs' => $it->length_pairs ?? [],
                             'quantity_sold' => (float) $it->quantity,
                             'unit_price' => (float) $it->unit_price,
                             'remaining' => $this->remainingForSaleItem($it),
@@ -260,7 +278,8 @@ class SaleReturnController extends Controller
             'warehouse:id,name',
             'creator:id,name',
             'items.product:id,name,slug',
-            'items.saleItem:id,sale_id',
+            'items.productVarient:id,product_id,name,sku',
+            'items.saleItem:id,sale_id,billing_mode,length_pairs,quantity,unit_price',
         ]);
 
         return Inertia::render('Sale/Return/Show', [

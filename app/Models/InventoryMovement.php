@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Models\Company\Branch;
 use App\Models\Company\Warehouse;
 use App\Models\Product\Product;
+use App\Models\Product\ProductVarient;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -21,6 +22,8 @@ class InventoryMovement extends Model
         'product_batch_id',
         'direction',
         'quantity',
+        'billing_mode',
+        'length_pairs',
         'before_qty',
         'after_qty',
         'source_type',
@@ -34,6 +37,7 @@ class InventoryMovement extends Model
     {
         return [
             'quantity' => 'decimal:4',
+            'length_pairs' => 'array',
             'before_qty' => 'decimal:4',
             'after_qty' => 'decimal:4',
         ];
@@ -61,6 +65,14 @@ class InventoryMovement extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    /**
+     * @return BelongsTo<ProductVarient, $this>
+     */
+    public function productVarient(): BelongsTo
+    {
+        return $this->belongsTo(ProductVarient::class, 'product_variant_id');
     }
 
     /**

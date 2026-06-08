@@ -1,1 +1,0 @@
-function a(l){const e=Array.isArray(l.length_pairs)?l.length_pairs:[],o=[];for(let t=0;t<4;t++){const n=e[t],r=n?.length??n?.l,s=n?.qty??n?.q;o.push({length:r!=null&&r!==""?String(r):"",qty:s!=null&&s!==""?String(s):""})}return o}export{a as p};

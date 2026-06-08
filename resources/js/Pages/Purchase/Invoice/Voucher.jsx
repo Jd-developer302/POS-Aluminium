@@ -1,17 +1,16 @@
-import React, { Fragment, useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Head, Link, usePage } from '@inertiajs/react';
 import InvoiceLogoHeader from '@/Components/InvoiceLogoHeader';
 import ReceiptLayout from '@/Layouts/ReceiptLayout';
-import { formatQuantity } from '@/lib/formatQuantity';
-import { computeLengthLineAmounts } from '@/lib/saleLengthBilling';
-import { pairsForLengthDisplay } from '@/lib/saleLengthPairsDisplay';
+import { buildPurchaseInvoiceDetailRows } from '@/lib/purchaseOrderDetailTableRows';
+import {
+    saleDetailBillingLayout,
+    saleDetailCutsColumnHeader,
+    saleDetailOnHandColumnHeader,
+} from '@/lib/saleDetailTableRows';
 import { formatPurchaseInvoiceDate } from './formatInvoiceDate';
 
 const FALLBACK_RECEIPT_SIGNATURE_SRC = '/img/receipt-signature.svg';
-
-function isLengthBillingItem(it) {
-    return (it?.billing_mode ?? it?.billingMode ?? 'quantity') === 'length_ft';
-}
 
 function paymentStatusLabel(invoice) {
     const due = Number(invoice?.due_amount ?? 0);
@@ -30,8 +29,10 @@ export default function Voucher({ invoice }) {
     const signatureSrc = receiptSignatureUrl || FALLBACK_RECEIPT_SIGNATURE_SRC;
 
     const lines = invoice.items ?? [];
-    const allLengthBilling = lines.length > 0 && lines.every(isLengthBillingItem);
-    const qtyColumnHeader = allLengthBilling ? 'Length Qty' : 'Qty';
+    const billingCols = saleDetailBillingLayout(lines);
+    const cutsColumnHeader = saleDetailCutsColumnHeader(lines);
+    const onHandColumnHeader = saleDetailOnHandColumnHeader(lines);
+    const detailRows = useMemo(() => buildPurchaseInvoiceDetailRows(lines), [lines]);
 
     const supplier = invoice.supplier;
 
@@ -101,128 +102,66 @@ export default function Voucher({ invoice }) {
 
                     <div className="p-6">
                         <div className="overflow-x-auto rounded-lg border border-gray-200 print:border-gray-300">
-                            <table className="min-w-full divide-y divide-gray-200">
+                            <table className="min-w-full divide-y divide-gray-200 text-sm">
                                 <thead className="bg-gray-50">
                                     <tr>
-                                        <th className="px-3 py-2 text-start font-semibold text-gray-700">
-                                            Item
-                                        </th>
-                                        <th className="px-3 py-2 text-end font-semibold text-gray-700">
-                                            {qtyColumnHeader}
-                                        </th>
-                                        <th className="px-3 py-2 text-end font-semibold text-gray-700">
-                                            Unit cost
-                                        </th>
-                                        <th className="px-3 py-2 text-end font-semibold text-gray-700">
-                                            Total
-                                        </th>
+                                        <th className="px-3 py-2 text-start font-semibold text-gray-700">Item</th>
+                                        <th className="px-3 py-2 text-start font-semibold text-gray-700">Variant</th>
+                                        {billingCols === 'qty' ? (
+                                            <th className="px-3 py-2 text-end font-semibold text-gray-700">Qty</th>
+                                        ) : null}
+                                        {billingCols === 'length_actual' || billingCols === 'length_actual_qty' ? (
+                                            <th className="px-3 py-2 text-start font-semibold text-gray-700">
+                                                {cutsColumnHeader}
+                                            </th>
+                                        ) : null}
+                                        {billingCols === 'length_actual' || billingCols === 'length_actual_qty' ? (
+                                            <th className="px-3 py-2 text-end font-semibold text-gray-700">
+                                                {onHandColumnHeader}
+                                            </th>
+                                        ) : null}
+                                        {billingCols === 'length_actual_qty' ? (
+                                            <th className="px-3 py-2 text-end font-semibold text-gray-700">Qty</th>
+                                        ) : null}
+                                        <th className="px-3 py-2 text-end font-semibold text-gray-700">Unit cost</th>
+                                        <th className="px-3 py-2 text-end font-semibold text-gray-700">Total</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100">
-                                    {lines.map((it) => {
-                                        const lengthRow = isLengthBillingItem(it);
-                                        const pairsGrid = pairsForLengthDisplay(it);
-                                        const hasPairRows =
-                                            Array.isArray(it.length_pairs) && it.length_pairs.length > 0;
-                                        const rawPairsForTotals = hasPairRows
-                                            ? it.length_pairs
-                                            : pairsGrid.map((row) => ({
-                                                  length: row.length === '' ? 0 : row.length,
-                                                  qty: row.qty === '' ? 0 : row.qty,
-                                              }));
-                                        const grossOnly = computeLengthLineAmounts({
-                                            ...it,
-                                            unit_price: it.unit_cost,
-                                            length_pairs: rawPairsForTotals,
-                                            discount_percent: 0,
-                                        });
-
-                                        return (
-                                            <Fragment key={it.id}>
-                                                <tr className="align-top print:break-inside-avoid">
-                                                    <td className="px-3 py-2 text-gray-900">
-                                                        <div className="font-medium">
-                                                            {it.product?.name ?? `Product #${it.product_id}`}
-                                                        </div>
-                                                        {it.productVarient?.sku ? (
-                                                            <div className="mt-0.5 text-xs text-gray-600">
-                                                                {it.productVarient.sku}
-                                                                {it.productVarient.name
-                                                                    ? ` — ${it.productVarient.name}`
-                                                                    : ''}
-                                                            </div>
-                                                        ) : null}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-end text-gray-700">
-                                                        {!allLengthBilling && lengthRow && (
-                                                            <div className="mb-0.5 text-xs font-semibold text-gray-500">
-                                                                Length Qty
-                                                            </div>
-                                                        )}
-                                                        {formatQuantity(it.quantity)}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-end text-gray-700">
-                                                        {it.unit_cost}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-end font-semibold text-gray-900">
-                                                        {it.subtotal}
-                                                    </td>
-                                                </tr>
-                                                {lengthRow && hasPairRows && (
-                                                    <tr className="print:break-inside-avoid">
-                                                        <td
-                                                            colSpan={4}
-                                                            className="border-t border-gray-100 px-3 py-2 text-sm text-gray-800"
-                                                        >
-                                                            <p className="text-xs font-medium text-gray-500">
-                                                                Lengths
-                                                            </p>
-                                                            <ul className="mt-1 list-none space-y-0.5 text-sm tabular-nums">
-                                                                {pairsGrid
-                                                                    .map((row, pairIdx) => ({
-                                                                        row,
-                                                                        pairIdx,
-                                                                    }))
-                                                                    .filter(
-                                                                        ({ row }) =>
-                                                                            Number(row.length || 0) *
-                                                                                Number(row.qty || 0) >
-                                                                            0,
-                                                                    )
-                                                                    .map(({ row, pairIdx }) => {
-                                                                        const lineFt =
-                                                                            Number(row.length || 0) *
-                                                                            Number(row.qty || 0);
-                                                                        return (
-                                                                            <li
-                                                                                key={`${it.id}-pair-${pairIdx}`}
-                                                                            >
-                                                                                {row.length} × {row.qty} ={' '}
-                                                                                {lineFt.toFixed(4)} ft
-                                                                            </li>
-                                                                        );
-                                                                    })}
-                                                            </ul>
-                                                            <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 border-t border-gray-100 pt-2 text-xs text-gray-600">
-                                                                <span>
-                                                                    Total FT{' '}
-                                                                    <strong className="text-gray-900">
-                                                                        {grossOnly.totalFt.toFixed(4)}
-                                                                    </strong>
-                                                                </span>
-                                                                <span>
-                                                                    Discount{' '}
-                                                                    <strong className="font-mono text-gray-900">
-                                                                        {Number(it.discount ?? 0).toFixed(2)}
-                                                                    </strong>
-                                                                </span>
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                )}
-                                            </Fragment>
-                                        );
-                                    })}
+                                    {detailRows.map((row) => (
+                                        <tr key={row.key} className="align-top print:break-inside-avoid">
+                                            <td className="px-3 py-2 text-gray-900">{row.product}</td>
+                                            <td className="px-3 py-2 text-gray-700">{row.variant}</td>
+                                            {billingCols === 'qty' ? (
+                                                <td className="px-3 py-2 text-end tabular-nums text-gray-800">
+                                                    {row.qtyUnits}
+                                                </td>
+                                            ) : null}
+                                            {billingCols === 'length_actual' ||
+                                            billingCols === 'length_actual_qty' ? (
+                                                <td className="px-3 py-2 tabular-nums text-gray-800">
+                                                    {row.lengthsSummary}
+                                                </td>
+                                            ) : null}
+                                            {billingCols === 'length_actual' ||
+                                            billingCols === 'length_actual_qty' ? (
+                                                <td className="px-3 py-2 text-end tabular-nums text-gray-800">
+                                                    {row.actualFt}
+                                                </td>
+                                            ) : null}
+                                            {billingCols === 'length_actual_qty' ? (
+                                                <td className="px-3 py-2 text-end tabular-nums text-gray-800">
+                                                    {row.qtyUnits}
+                                                </td>
+                                            ) : null}
+                                            <td className="px-3 py-2 text-end tabular-nums text-gray-800">
+                                                {row.unitCost}
+                                            </td>
+                                            <td className="px-3 py-2 text-end font-semibold tabular-nums text-gray-900">
+                                                {row.amount}
+                                            </td>
+                                        </tr>
+                                    ))}
                                 </tbody>
                             </table>
                         </div>

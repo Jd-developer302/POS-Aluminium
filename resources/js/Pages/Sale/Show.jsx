@@ -5,6 +5,8 @@ import {
     buildSaleDetailRows,
     formatSaleMoney,
     saleDetailBillingLayout,
+    saleDetailCutsColumnHeader,
+    saleDetailOnHandColumnHeader,
     saleSummaryTotals,
 } from '@/lib/saleDetailTableRows';
 
@@ -36,6 +38,8 @@ export default function Show({ sale }) {
 
     const saleItems = sale.items ?? [];
     const billingCols = saleDetailBillingLayout(saleItems);
+    const cutsColumnHeader = saleDetailCutsColumnHeader(saleItems);
+    const onHandColumnHeader = saleDetailOnHandColumnHeader(saleItems);
 
     const detailRows = useMemo(() => buildSaleDetailRows(saleItems), [saleItems]);
     const totals = useMemo(() => saleSummaryTotals(sale), [sale]);
@@ -125,12 +129,12 @@ export default function Show({ sale }) {
                                         ) : null}
                                         {billingCols === 'length_actual' || billingCols === 'length_actual_qty' ? (
                                             <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                                                Lengths (L×Q)
+                                                {cutsColumnHeader}
                                             </th>
                                         ) : null}
                                         {billingCols === 'length_actual' || billingCols === 'length_actual_qty' ? (
                                             <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                                                Actual ft (on hand)
+                                                {onHandColumnHeader}
                                             </th>
                                         ) : null}
                                         {billingCols === 'length_actual_qty' ? (

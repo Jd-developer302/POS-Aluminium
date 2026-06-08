@@ -1,25 +1,11 @@
 import React from 'react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, useForm, usePage } from '@inertiajs/react';
-import { emptyLengthPairs } from '@/lib/saleLengthBilling';
 import { transformPurchaseInvoiceItems } from '@/lib/purchaseInvoiceSubmitItems';
-import PurchaseInvoiceForm from './_Form';
-
-function pairsFromInvoice(raw) {
-    const base = emptyLengthPairs();
-    const arr = Array.isArray(raw) ? raw : [];
-    for (let i = 0; i < base.length; i++) {
-        const row = arr[i];
-        if (row && typeof row === 'object') {
-            base[i] = {
-                length:
-                    row.length != null && row.length !== '' ? String(row.length) : '',
-                qty: row.qty != null && row.qty !== '' ? String(row.qty) : '',
-            };
-        }
-    }
-    return base;
-}
+import PurchaseInvoiceForm, {
+    purchaseAreaPairsForForm,
+    purchaseLengthPairsForForm,
+} from './_Form';
 
 function toDateInput(value) {
     if (value == null || value === '') {
@@ -51,21 +37,26 @@ export default function Edit({
         notes: invoice.notes ?? '',
         shipping_cost: invoice.shipping_cost ?? 0,
         discount_amount: invoice.discount_amount ?? 0,
-        items: (invoice.items ?? []).map((it) => ({
-            product_id: it.product_id,
-            product_variant_id: it.product_variant_id != null ? String(it.product_variant_id) : '',
-            product_batch_id: it.product_batch_id != null ? String(it.product_batch_id) : '',
-            billing_mode: it.billing_mode ?? 'quantity',
-            length_pairs: pairsFromInvoice(it.length_pairs),
-            rate_per_ft:
-                (it.billing_mode ?? 'quantity') === 'length_ft'
-                    ? String(it.unit_cost ?? '')
-                    : '',
-            quantity: it.quantity,
-            unit_cost: it.unit_cost,
-            discount: it.discount ?? 0,
-            tax_rate: it.tax_rate ?? 0,
-        })),
+        items: (invoice.items ?? []).map((it) => {
+            const billingMode = it.billing_mode ?? 'quantity';
+            return {
+                product_id: it.product_id,
+                product_variant_id:
+                    it.product_variant_id != null ? String(it.product_variant_id) : '',
+                product_batch_id: it.product_batch_id != null ? String(it.product_batch_id) : '',
+                billing_mode: billingMode,
+                length_pairs:
+                    billingMode === 'area_sqft'
+                        ? purchaseAreaPairsForForm(it.length_pairs)
+                        : purchaseLengthPairsForForm(it.length_pairs),
+                rate_per_ft: billingMode === 'length_ft' ? String(it.unit_cost ?? '') : '',
+                rate_per_sqft: billingMode === 'area_sqft' ? String(it.unit_cost ?? '') : '',
+                quantity: it.quantity,
+                unit_cost: it.unit_cost,
+                discount: it.discount ?? 0,
+                tax_rate: it.tax_rate ?? 0,
+            };
+        }),
     });
 
     const submit = (e) => {

@@ -75,10 +75,14 @@
                     <td>{{ $row['variant'] }}</td>
                     <td>{{ $row['length_qty'] }}</td>
                     <td>
-                        @if(($row['unit_price_note'] ?? '') === 'Rate/ft' && ($row['unit_price'] ?? '') !== '')
-                            <span style="font-size:9px;color:#555;">Rate/ft</span><br>{{ $row['unit_price'] }}
+                        @php
+                            $priceNote = (string) ($row['unit_price_note'] ?? '');
+                            $priceVal = (string) ($row['unit_price'] ?? '');
+                        @endphp
+                        @if(in_array($priceNote, ['Rate/ft', 'Rate/sqft'], true) && $priceVal !== '')
+                            <span style="font-size:9px;color:#555;">{{ $priceNote }}</span><br>{{ $priceVal }}
                         @else
-                            {{ $row['unit_price'] }}
+                            {{ $priceVal }}
                         @endif
                     </td>
                     <td class="num">{{ $row['discount_percent'] ?? '0%' }}</td>

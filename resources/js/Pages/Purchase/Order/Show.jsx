@@ -2,7 +2,11 @@ import React, { useMemo } from 'react';
 import { Head, Link, useForm, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { buildPurchaseOrderDetailRows } from '@/lib/purchaseOrderDetailTableRows';
-import { saleDetailBillingLayout } from '@/lib/saleDetailTableRows';
+import {
+    saleDetailBillingLayout,
+    saleDetailCutsColumnHeader,
+    saleDetailOnHandColumnHeader,
+} from '@/lib/saleDetailTableRows';
 import { formatPurchaseInvoiceDate } from '../Invoice/formatInvoiceDate';
 
 function formatPoStatus(status) {
@@ -46,6 +50,8 @@ export default function Show({ order }) {
     const invoices = order.invoices ?? [];
     const notificationLogs = order.notification_logs ?? [];
     const billingCols = saleDetailBillingLayout(lines);
+    const cutsColumnHeader = saleDetailCutsColumnHeader(lines);
+    const onHandColumnHeader = saleDetailOnHandColumnHeader(lines);
     const detailRows = useMemo(() => buildPurchaseOrderDetailRows(lines), [lines]);
     const pdfHref = route('purchase-orders.pdf', order.id);
 
@@ -135,12 +141,12 @@ export default function Show({ order }) {
                                         ) : null}
                                         {billingCols === 'length_actual' || billingCols === 'length_actual_qty' ? (
                                             <th className="px-4 py-3 text-start font-semibold text-gray-700">
-                                                Lengths (L×Q)
+                                                {cutsColumnHeader}
                                             </th>
                                         ) : null}
                                         {billingCols === 'length_actual' || billingCols === 'length_actual_qty' ? (
                                             <th className="px-4 py-3 text-start font-semibold text-gray-700">
-                                                Actual ft (on hand)
+                                                {onHandColumnHeader}
                                             </th>
                                         ) : null}
                                         {billingCols === 'length_actual_qty' ? (

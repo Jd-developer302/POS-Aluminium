@@ -1,6 +1,18 @@
 import React, { Fragment, useEffect, useMemo, useState } from 'react';
 import { usePage } from '@inertiajs/react';
-import { computeLengthLineAmounts, emptyLengthPairs } from '@/lib/saleLengthBilling';
+import GlassAreaBillingPanel from '@/Components/GlassAreaBillingPanel';
+import {
+    addBillingPairRow,
+    DEFAULT_BILLING_ROW_COUNT,
+    emptyAreaPairs,
+    emptyLengthPairs,
+    removeBillingPairRow,
+    setBillingMode,
+    syncBillingTotals,
+    updateBillingPair,
+} from '@/lib/billingLineItemState';
+import { computeAreaLineAmounts } from '@/lib/glassAreaBilling';
+import { computeLengthLineAmounts } from '@/lib/saleLengthBilling';
 import { formatVariantAttributes, variantFullLabel } from '@/lib/variantLabel';
 import Modal from '@/Components/Modal';
 import InputLabel from '@/Components/InputLabel';
@@ -14,7 +26,27 @@ const comboboxWrapClass = 'relative mt-2 rounded-lg border border-gray-300 bg-wh
 const comboboxInputClass =
     'block w-full rounded-lg border-0 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand/20';
 
-const DEFAULT_LENGTH_ROW_COUNT = 4;
+const DEFAULT_LENGTH_ROW_COUNT = DEFAULT_BILLING_ROW_COUNT;
+
+/** @param {Record<string, unknown>} it */
+function withUnitCostAsPrice(it) {
+    return { ...it, unit_price: it.unit_cost };
+}
+
+/** @param {Record<string, unknown>} it */
+function withUnitCostFromPrice(it) {
+    const { unit_price, ...rest } = it;
+    return { ...rest, unit_cost: unit_price };
+}
+
+/** @param {Record<string, unknown>} draft */
+function syncPurchaseBillingTotals(draft) {
+    const mode = draft.billing_mode ?? 'quantity';
+    if (!['length_ft', 'area_sqft'].includes(mode)) {
+        return draft;
+    }
+    return withUnitCostFromPrice(syncBillingTotals(withUnitCostAsPrice(draft)));
+}
 
 /** @param {unknown} raw */
 export function purchaseLengthPairsForForm(raw) {
@@ -30,10 +62,35 @@ export function purchaseLengthPairsForForm(raw) {
     return mapped;
 }
 
-function lengthPairsForItem(it) {
+/** @param {unknown} raw */
+export function purchaseAreaPairsForForm(raw) {
+    const rows = Array.isArray(raw) ? raw : [];
+    const mapped = rows.map((r) => ({
+        width: r?.width != null && r?.width !== '' ? String(r.width) : '',
+        height: r?.height != null && r?.height !== '' ? String(r.height) : '',
+        qty: r?.qty != null && r?.qty !== '' ? String(r.qty) : '',
+    }));
+    const minRows = Math.max(DEFAULT_LENGTH_ROW_COUNT, mapped.length + 1);
+    while (mapped.length < minRows) {
+        mapped.push({ width: '', height: '', qty: '' });
+    }
+    return mapped;
+}
+
+function pairsForItem(it) {
+    const mode = it.billing_mode ?? 'quantity';
     const rows = Array.isArray(it?.length_pairs) ? it.length_pairs : [];
     if (rows.length === 0) {
-        return emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+        return mode === 'area_sqft'
+            ? emptyAreaPairs(DEFAULT_LENGTH_ROW_COUNT)
+            : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+    }
+    if (mode === 'area_sqft') {
+        return rows.map((r) => ({
+            width: r?.width != null && r?.width !== '' ? String(r.width) : '',
+            height: r?.height != null && r?.height !== '' ? String(r.height) : '',
+            qty: r?.qty != null && r?.qty !== '' ? String(r.qty) : '',
+        }));
     }
     return rows.map((r) => ({
         length: r?.length != null && r?.length !== '' ? String(r.length) : '',
@@ -199,117 +256,80 @@ export default function PurchaseOrderForm({
     const qtyTableColumnHeader = useMemo(() => {
         const items = data.items ?? [];
         if (items.length === 0) return 'Qty';
-        return items.every((it) => (it.billing_mode ?? 'quantity') === 'length_ft')
-            ? 'Length Qty'
-            : 'Qty';
+        if (items.every((it) => (it.billing_mode ?? 'quantity') === 'length_ft')) {
+            return 'Length Qty';
+        }
+        if (items.every((it) => (it.billing_mode ?? 'quantity') === 'area_sqft')) {
+            return 'Sq Ft';
+        }
+        return 'Qty';
     }, [data.items]);
 
-    const syncPurchaseLengthTotals = (draft) => {
-        if ((draft.billing_mode ?? 'quantity') !== 'length_ft') {
-            return draft;
-        }
-        const next = { ...draft };
-        const r = computeLengthLineAmounts({
-            ...next,
-            unit_price: next.unit_cost,
-            discount_percent: 0,
-        });
-        next.quantity = r.totalFt > 0 ? String(r.totalFt) : '';
-        const rp =
-            next.rate_per_ft !== '' && next.rate_per_ft != null
-                ? Number(next.rate_per_ft)
-                : Number(next.unit_cost || 0);
-        next.rate_per_ft = rp > 0 ? String(rp) : next.rate_per_ft;
-        next.unit_cost = String(Number.isFinite(rp) ? rp : 0);
-        return next;
-    };
-
-    const updateLengthPair = (idx, pairIdx, field, raw) => {
+    const updateBillingPairRow = (idx, pairIdx, field, raw) => {
         setData(
             'items',
-            data.items.map((it, i) => {
-                if (i !== idx) return it;
-                const pairs = [...lengthPairsForItem(it)].map((row, j) =>
-                    j === pairIdx ? { ...row, [field]: raw } : row,
-                );
-                return syncPurchaseLengthTotals({ ...it, length_pairs: pairs });
-            }),
+            data.items.map((it, i) =>
+                i === idx
+                    ? withUnitCostFromPrice(
+                          updateBillingPair(withUnitCostAsPrice(it), pairIdx, field, raw),
+                      )
+                    : it,
+            ),
         );
     };
 
-    const togglePurchaseLengthBilling = (idx, checked) => {
+    const togglePurchaseBillingMode = (idx, targetMode, checked) => {
         setData(
             'items',
             data.items.map((it, i) => {
                 if (i !== idx) return it;
                 if (!checked) {
-                    return {
-                        ...it,
-                        billing_mode: 'quantity',
-                        length_pairs: emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT),
-                        rate_per_ft: '',
-                        quantity:
-                            it.quantity !== '' && Number(it.quantity) > 0 ? String(it.quantity) : '1',
-                        unit_cost: it.unit_cost,
-                    };
+                    return withUnitCostFromPrice(
+                        setBillingMode(withUnitCostAsPrice(it), 'quantity'),
+                    );
                 }
-                const rate =
-                    Number(it.rate_per_ft) > 0
-                        ? it.rate_per_ft
-                        : Number(it.unit_cost) > 0
-                          ? String(it.unit_cost)
-                          : '';
-                const existingPairs = lengthPairsForItem(it);
-                const draft = {
-                    ...it,
-                    billing_mode: 'length_ft',
-                    length_pairs:
-                        existingPairs.length > 0
-                            ? existingPairs
-                            : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT),
-                    rate_per_ft: rate,
-                };
-                return syncPurchaseLengthTotals(draft);
+                return withUnitCostFromPrice(
+                    setBillingMode(withUnitCostAsPrice(it), targetMode),
+                );
             }),
         );
     };
 
-    const addLengthPairRow = (idx) => {
+    const addBillingPairRowToItem = (idx) => {
         setData(
             'items',
-            data.items.map((it, i) => {
-                if (i !== idx) return it;
-                const p = lengthPairsForItem(it);
-                return syncPurchaseLengthTotals({
-                    ...it,
-                    length_pairs: [...p, { length: '', qty: '' }],
-                });
-            }),
+            data.items.map((it, i) =>
+                i === idx
+                    ? withUnitCostFromPrice(addBillingPairRow(withUnitCostAsPrice(it)))
+                    : it,
+            ),
         );
     };
 
-    const removeLengthPairRow = (idx, pairIdx) => {
+    const removeBillingPairRowFromItem = (idx, pairIdx) => {
         setData(
             'items',
-            data.items.map((it, i) => {
-                if (i !== idx) return it;
-                const p = lengthPairsForItem(it);
-                if (p.length <= 1) return it;
-                const nextPairs = p.filter((_, j) => j !== pairIdx);
-                return syncPurchaseLengthTotals({ ...it, length_pairs: nextPairs });
-            }),
+            data.items.map((it, i) =>
+                i === idx
+                    ? withUnitCostFromPrice(
+                          removeBillingPairRow(withUnitCostAsPrice(it), pairIdx),
+                      )
+                    : it,
+            ),
         );
     };
 
-    const refreshLengthPairs = (idx) => {
+    const refreshBillingPairs = (idx) => {
         setData(
             'items',
             data.items.map((it, i) => {
                 if (i !== idx) return it;
-                return syncPurchaseLengthTotals({
-                    ...it,
-                    length_pairs: emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT),
-                });
+                const mode = it.billing_mode ?? 'quantity';
+                const empty =
+                    mode === 'area_sqft'
+                        ? emptyAreaPairs(DEFAULT_LENGTH_ROW_COUNT)
+                        : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+                return syncPurchaseBillingTotals({ ...it, length_pairs: empty });
             }),
         );
     };
@@ -320,8 +340,8 @@ export default function PurchaseOrderForm({
             data.items.map((it, i) => {
                 if (i !== idx) return it;
                 let next = { ...it, ...patch };
-                if ((next.billing_mode ?? 'quantity') === 'length_ft') {
-                    next = syncPurchaseLengthTotals(next);
+                if (['length_ft', 'area_sqft'].includes(next.billing_mode ?? 'quantity')) {
+                    next = syncPurchaseBillingTotals(next);
                 }
                 return next;
             }),
@@ -334,7 +354,9 @@ export default function PurchaseOrderForm({
             (products ?? []).find((p) => String(p.id) === String(selectedProduct)) ?? null;
         const productVariants = productRow?.variants ?? [];
         const defaultVariantId =
-            productVariants.length === 1 ? String(productVariants[0].id) : '';
+            productRow?.type === 'variable' || productVariants.length !== 1
+                ? ''
+                : String(productVariants[0].id);
 
         setData('items', [
             ...(data.items ?? []),
@@ -344,6 +366,7 @@ export default function PurchaseOrderForm({
                 billing_mode: 'quantity',
                 length_pairs: emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT),
                 rate_per_ft: '',
+                rate_per_sqft: '',
                 quantity: 1,
                 received_quantity: showReceivedQty ? 0 : 0,
                 unit_cost: 0,
@@ -672,14 +695,20 @@ export default function PurchaseOrderForm({
                             ) : (
                                 (data.items ?? []).map((it, idx) => {
                                     const vOpts = buildVariantOptions(variants, it.product_id);
-                                    const isLength =
-                                        (it.billing_mode ?? 'quantity') === 'length_ft';
-                                    const pairs = lengthPairsForItem(it);
+                                    const billingMode = it.billing_mode ?? 'quantity';
+                                    const isLength = billingMode === 'length_ft';
+                                    const isArea = billingMode === 'area_sqft';
+                                    const pairs = pairsForItem(it);
                                     const lenAmt = computeLengthLineAmounts({
                                         ...it,
                                         unit_price: it.unit_cost,
                                         length_pairs: pairs,
                                         discount_percent: 0,
+                                    });
+                                    const areaAmt = computeAreaLineAmounts({
+                                        ...it,
+                                        unit_cost: it.unit_cost,
+                                        length_pairs: pairs,
                                     });
 
                                     return (
@@ -707,8 +736,9 @@ export default function PurchaseOrderForm({
                                                             type="checkbox"
                                                             checked={isLength}
                                                             onChange={(e) =>
-                                                                togglePurchaseLengthBilling(
+                                                                togglePurchaseBillingMode(
                                                                     idx,
+                                                                    'length_ft',
                                                                     e.target.checked,
                                                                 )
                                                             }
@@ -716,6 +746,23 @@ export default function PurchaseOrderForm({
                                                         />
                                                         <span className="text-xs text-gray-600">
                                                             Length (ft) billing
+                                                        </span>
+                                                    </label>
+                                                    <label className="mt-1 flex cursor-pointer items-center gap-2">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isArea}
+                                                            onChange={(e) =>
+                                                                togglePurchaseBillingMode(
+                                                                    idx,
+                                                                    'area_sqft',
+                                                                    e.target.checked,
+                                                                )
+                                                            }
+                                                            className="rounded border-gray-300 text-brand focus:ring-brand"
+                                                        />
+                                                        <span className="text-xs text-gray-600">
+                                                            Glass area (sq ft)
                                                         </span>
                                                     </label>
                                                     {errors?.[`items.${idx}.product_id`] && (
@@ -748,6 +795,13 @@ export default function PurchaseOrderForm({
                                                             <p className="text-xs text-gray-500">Total FT</p>
                                                             <p className="font-mono text-sm font-semibold text-gray-900">
                                                                 {lenAmt.totalFt.toFixed(4)}
+                                                            </p>
+                                                        </div>
+                                                    ) : isArea ? (
+                                                        <div>
+                                                            <p className="text-xs text-gray-500">Total sq ft</p>
+                                                            <p className="font-mono text-sm font-semibold text-gray-900">
+                                                                {areaAmt.totalSqFt.toFixed(4)}
                                                             </p>
                                                         </div>
                                                     ) : (
@@ -811,6 +865,27 @@ export default function PurchaseOrderForm({
                                                                 className="h-10 w-24 rounded-lg border border-gray-300 px-2"
                                                             />
                                                         </div>
+                                                    ) : isArea ? (
+                                                        <div>
+                                                            <p className="text-xs text-gray-500">Cost / sq ft</p>
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                min="0"
+                                                                value={
+                                                                    it.rate_per_sqft !== '' &&
+                                                                    it.rate_per_sqft != null
+                                                                        ? it.rate_per_sqft
+                                                                        : it.unit_cost ?? ''
+                                                                }
+                                                                onChange={(e) =>
+                                                                    updateItem(idx, {
+                                                                        rate_per_sqft: e.target.value,
+                                                                    })
+                                                                }
+                                                                className="h-10 w-24 rounded-lg border border-gray-300 px-2"
+                                                            />
+                                                        </div>
                                                     ) : (
                                                         <input
                                                             type="number"
@@ -859,6 +934,41 @@ export default function PurchaseOrderForm({
                                                     </button>
                                                 </td>
                                             </tr>
+                                            {isArea && (
+                                                <tr className="bg-sky-50/50">
+                                                    <td
+                                                        colSpan={showReceivedQty ? 8 : 7}
+                                                        className="px-3 py-3 text-sm text-gray-800"
+                                                    >
+                                                        <GlassAreaBillingPanel
+                                                            pairs={pairs}
+                                                            onUpdatePair={(pairIdx, field, raw) =>
+                                                                updateBillingPairRow(
+                                                                    idx,
+                                                                    pairIdx,
+                                                                    field,
+                                                                    raw,
+                                                                )
+                                                            }
+                                                            onAddRow={() => addBillingPairRowToItem(idx)}
+                                                            onRemoveRow={(pairIdx) =>
+                                                                removeBillingPairRowFromItem(idx, pairIdx)
+                                                            }
+                                                            onRefresh={() => refreshBillingPairs(idx)}
+                                                        />
+                                                        <div className="mt-3 flex flex-wrap items-end gap-4 border-t border-gray-200 pt-3">
+                                                            <div>
+                                                                <p className="text-xs font-medium text-gray-600">
+                                                                    Total sq ft (order qty)
+                                                                </p>
+                                                                <p className="font-mono text-sm font-semibold text-gray-900">
+                                                                    {areaAmt.totalSqFt.toFixed(4)}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )}
                                             {isLength && (
                                                 <tr className="bg-gray-50/70">
                                                     <td
@@ -886,7 +996,7 @@ export default function PurchaseOrderForm({
                                                                                 placeholder="Length"
                                                                                 value={row.length}
                                                                                 onChange={(e) =>
-                                                                                    updateLengthPair(
+                                                                                    updateBillingPairRow(
                                                                                         idx,
                                                                                         pairIdx,
                                                                                         'length',
@@ -905,7 +1015,7 @@ export default function PurchaseOrderForm({
                                                                                 placeholder="Qty"
                                                                                 value={row.qty}
                                                                                 onChange={(e) =>
-                                                                                    updateLengthPair(
+                                                                                    updateBillingPairRow(
                                                                                         idx,
                                                                                         pairIdx,
                                                                                         'qty',
@@ -920,7 +1030,7 @@ export default function PurchaseOrderForm({
                                                                                     title="Remove row"
                                                                                     className="shrink-0 rounded border border-gray-200 bg-white px-1.5 py-1 text-xs text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
                                                                                     onClick={() =>
-                                                                                        removeLengthPairRow(
+                                                                                        removeBillingPairRowFromItem(
                                                                                             idx,
                                                                                             pairIdx,
                                                                                         )
@@ -950,14 +1060,14 @@ export default function PurchaseOrderForm({
                                                                 <button
                                                                     type="button"
                                                                     className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/10"
-                                                                    onClick={() => addLengthPairRow(idx)}
+                                                                    onClick={() => addBillingPairRowToItem(idx)}
                                                                 >
                                                                     + Add length row
                                                                 </button>
                                                                 <button
                                                                     type="button"
                                                                     className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700"
-                                                                    onClick={() => refreshLengthPairs(idx)}
+                                                                    onClick={() => refreshBillingPairs(idx)}
                                                                 >
                                                                     Refresh rows
                                                                 </button>

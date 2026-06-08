@@ -1,8 +1,21 @@
 import { formatQuantity } from '@/lib/formatQuantity';
 import { saleLineProductLabel } from '@/lib/saleLineProductLabel';
 
+function billingMode(it) {
+    return it?.billing_mode ?? it?.billingMode ?? 'quantity';
+}
+
 export function isLengthBillingItem(it) {
-    return (it?.billing_mode ?? it?.billingMode ?? 'quantity') === 'length_ft';
+    return billingMode(it) === 'length_ft';
+}
+
+export function isAreaBillingItem(it) {
+    return billingMode(it) === 'area_sqft';
+}
+
+export function isDimensionBillingItem(it) {
+    const mode = billingMode(it);
+    return mode === 'length_ft' || mode === 'area_sqft';
 }
 
 export function formatSaleMoney(value) {
@@ -66,6 +79,11 @@ export function saleSummaryTotals(sale) {
 
 /** @param {Record<string, unknown>} it */
 export function saleVariantCell(it) {
+    const preset = it?.variant_label;
+    if (preset != null && String(preset).trim() !== '' && preset !== '—') {
+        return String(preset);
+    }
+
     const pv =
         it.product_varient ?? it.product_variant ?? it.productVariant ?? it.productVarient;
     if (!pv || typeof pv !== 'object') {
@@ -100,15 +118,96 @@ export function formatLengthPairsSummary(pairs) {
 }
 
 /**
+ * Same compact summary as glass area stock (e.g. `12×24×2 + 18×36×1`).
+ * @param {unknown[]} pairs
+ */
+export function formatAreaPairsSummary(pairs) {
+    if (!Array.isArray(pairs)) return '—';
+    const parts = pairs
+        .map((r) => {
+            const w = Number(r?.width ?? 0);
+            const h = Number(r?.height ?? 0);
+            const q = Number(r?.qty ?? 0);
+            if (w <= 0 && h <= 0 && q <= 0) return null;
+            return `${w}×${h}×${q}`;
+        })
+        .filter(Boolean);
+    return parts.length ? parts.join(' + ') : '—';
+}
+
+/**
+ * Cuts column title for sale/PO detail tables (glass vs aluminium vs mixed).
+ * @param {Record<string, unknown>[]} items
+ */
+export function saleDetailCutsColumnHeader(items) {
+    const dim = (items ?? []).filter(isDimensionBillingItem);
+    if (dim.length === 0) {
+        return 'Cuts';
+    }
+    if (dim.every(isAreaBillingItem)) {
+        return 'Sizes (W×H×Q)';
+    }
+    if (dim.every(isLengthBillingItem)) {
+        return 'Lengths (L×Q)';
+    }
+    return 'Cuts / sizes';
+}
+
+/**
+ * On-hand / billed quantity column title (sq ft for glass, ft for aluminium).
+ * @param {Record<string, unknown>[]} items
+ */
+export function saleDetailOnHandColumnHeader(items) {
+    const dim = (items ?? []).filter(isDimensionBillingItem);
+    if (dim.length === 0) {
+        return 'Qty';
+    }
+    if (dim.every(isAreaBillingItem)) {
+        return 'Actual sq ft (on hand)';
+    }
+    if (dim.every(isLengthBillingItem)) {
+        return 'Actual ft (on hand)';
+    }
+    return 'On hand (ft / sq ft)';
+}
+
+/**
+ * Stock transfer / inventory movement cuts column (same rules as sale detail).
+ * @param {Record<string, unknown>[]} items
+ */
+export function transferDetailCutsColumnHeader(items) {
+    return saleDetailCutsColumnHeader(items);
+}
+
+/**
+ * Stock transfer qty column header.
+ * @param {Record<string, unknown>[]} items
+ */
+export function transferDetailQtyColumnHeader(items) {
+    const list = items ?? [];
+    const dim = list.filter(isDimensionBillingItem);
+    if (dim.length === 0) {
+        return 'Qty';
+    }
+    if (dim.every(isAreaBillingItem)) {
+        return 'Sq ft';
+    }
+    if (dim.every(isLengthBillingItem)) {
+        return 'Ft';
+    }
+    return 'Qty (ft / sq ft)';
+}
+
+/**
  * How many quantity columns the sale / PO detail table should show (matches Stock when length billing is used).
  * @param {Record<string, unknown>[]} items
  * @returns {'qty' | 'length_actual' | 'length_actual_qty'}
  */
 export function saleDetailBillingLayout(items) {
     const list = items ?? [];
-    const hasLength = list.some(isLengthBillingItem);
-    const hasQuantity = list.some((it) => !isLengthBillingItem(it));
-    if (!hasLength) return 'qty';
+    const hasDimension = list.some(isDimensionBillingItem);
+    const hasQuantity = list.some((it) => !isDimensionBillingItem(it));
+    if (!hasDimension) return 'qty';
     if (!hasQuantity) return 'length_actual';
     return 'length_actual_qty';
 }
@@ -128,7 +227,7 @@ export function buildSaleDetailRows(items) {
         const rate = Number(it.unit_price ?? 0);
         const discountPercent = saleLineDiscountPercentLabel(it);
 
-        if (!isLengthBillingItem(it)) {
+        if (!isDimensionBillingItem(it)) {
             out.push({
                 key: `q-${it.id}`,
                 product: title,
@@ -144,20 +243,28 @@ export function buildSaleDetailRows(items) {
         }
 
         const raw = Array.isArray(it.length_pairs) ? it.length_pairs : [];
-        let lengthsSummary = formatLengthPairsSummary(raw);
-        const ftTotal = Number(it.quantity ?? 0);
-        if (lengthsSummary === '—' && ftTotal > 0) {
-            lengthsSummary = `${formatQuantity(ftTotal)}×1`;
+        const dimTotal = Number(it.quantity ?? 0);
+        const isArea = isAreaBillingItem(it);
+
+        let lengthsSummary = isArea ? formatAreaPairsSummary(raw) : formatLengthPairsSummary(raw);
+        if (lengthsSummary === '—' && dimTotal > 0) {
+            lengthsSummary = isArea
+                ? `${formatQuantity(dimTotal)} sq ft`
+                : `${formatQuantity(dimTotal)}×1`;
         }
 
         out.push({
-            key: `l-${it.id}-0`,
+            key: `${isArea ? 'a' : 'l'}-${it.id}-0`,
             product: title,
             variant,
             lengthsSummary,
-            actualFt: formatQuantity(ftTotal),
+            actualFt: isArea
+                ? `${formatQuantity(dimTotal)} sq ft`
+                : formatQuantity(dimTotal),
             qtyUnits: '—',
-            unitPrice: `Rate/ft ${formatSaleMoney(rate)}`,
+            unitPrice: isArea
+                ? `Rate/sqft ${formatSaleMoney(rate)}`
+                : `Rate/ft ${formatSaleMoney(rate)}`,
             discountPercent,
             amount: formatSaleMoney(lineSub),
         });

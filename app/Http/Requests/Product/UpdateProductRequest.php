@@ -36,6 +36,10 @@ class UpdateProductRequest extends FormRequest
             $merge['variants'] = $variants;
         }
 
+        if ($this->has('sub_category_id') && $this->input('sub_category_id') === '') {
+            $merge['sub_category_id'] = null;
+        }
+
         if ($merge !== []) {
             $this->merge($merge);
         }
@@ -53,7 +57,7 @@ class UpdateProductRequest extends FormRequest
         $base = [
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'sub_category_id' => [
-                'required',
+                'nullable',
                 'integer',
                 Rule::exists('sub_categories', 'id')->where(
                     fn ($q) => $q->where('category_id', $categoryId),

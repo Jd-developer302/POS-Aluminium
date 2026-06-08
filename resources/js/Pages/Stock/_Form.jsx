@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from 'react';
+import GlassAreaBillingPanel from '@/Components/GlassAreaBillingPanel';
+import { computeAreaLineAmounts, emptyAreaPairs } from '@/lib/glassAreaBilling';
 import { computeLengthLineAmounts, emptyLengthPairs } from '@/lib/saleLengthBilling';
 import { formatVariantAttributes, variantFullLabel } from '@/lib/variantLabel';
 
@@ -29,6 +31,37 @@ export function stockLengthPairsForForm(stock) {
     return mapped;
 }
 
+/** @param {Record<string, unknown> | null | undefined} stock */
+export function stockAreaPairsForForm(stock) {
+    if ((stock?.billing_mode ?? 'quantity') !== 'area_sqft') {
+        return emptyAreaPairs(DEFAULT_LENGTH_ROW_COUNT);
+    }
+    const raw = stock?.length_pairs;
+    const rows = Array.isArray(raw) ? raw : [];
+    const mapped = rows.map((r) => ({
+        width: r?.width !== undefined && r?.width !== null ? String(r.width) : '',
+        height: r?.height !== undefined && r?.height !== null ? String(r.height) : '',
+        qty: r?.qty !== undefined && r?.qty !== null ? String(r.qty) : '',
+    }));
+    const minRows = Math.max(DEFAULT_LENGTH_ROW_COUNT, mapped.length + 1);
+    while (mapped.length < minRows) {
+        mapped.push({ width: '', height: '', qty: '' });
+    }
+    return mapped;
+}
+
+/** @param {Record<string, unknown> | null | undefined} stock */
+export function stockPairsForForm(stock) {
+    const mode = stock?.billing_mode ?? 'quantity';
+    if (mode === 'area_sqft') {
+        return stockAreaPairsForForm(stock);
+    }
+    if (mode === 'length_ft') {
+        return stockLengthPairsForForm(stock);
+    }
+    return emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+}
+
 /**
  * @param {Record<string, unknown>} form
  * @returns {Record<string, unknown>}
@@ -39,34 +72,58 @@ export function transformStockSubmitData(form) {
     const productVariantId =
         variantRaw === '' || variantRaw == null ? null : Number(variantRaw);
 
-    if ((form.billing_mode ?? 'quantity') !== 'length_ft') {
+    const mode = form.billing_mode ?? 'quantity';
+
+    if (mode === 'length_ft') {
+        const normalizedPairs = (Array.isArray(form.length_pairs) ? form.length_pairs : []).map(
+            (row) => ({
+                length: row?.length === '' || row?.length == null ? 0 : Number(row.length),
+                qty: row?.qty === '' || row?.qty == null ? 0 : Number(row.qty),
+            }),
+        );
+        const totalFt = normalizedPairs.reduce((s, r) => s + r.length * r.qty, 0);
+
         return {
             warehouse_id: Number(form.warehouse_id),
             product_id: Number(form.product_id),
             product_variant_id: productVariantId,
-            billing_mode: 'quantity',
-            length_pairs: null,
-            quantity: Number(form.quantity ?? 0),
+            billing_mode: 'length_ft',
+            length_pairs: normalizedPairs,
+            quantity: totalFt,
             reserved_quantity: reserved,
             status: form.status,
         };
     }
 
-    const normalizedPairs = (Array.isArray(form.length_pairs) ? form.length_pairs : []).map(
-        (row) => ({
-            length: row?.length === '' || row?.length == null ? 0 : Number(row.length),
-            qty: row?.qty === '' || row?.qty == null ? 0 : Number(row.qty),
-        }),
-    );
-    const totalFt = normalizedPairs.reduce((s, r) => s + r.length * r.qty, 0);
+    if (mode === 'area_sqft') {
+        const normalizedPairs = (Array.isArray(form.length_pairs) ? form.length_pairs : []).map(
+            (row) => ({
+                width: row?.width === '' || row?.width == null ? 0 : Number(row.width),
+                height: row?.height === '' || row?.height == null ? 0 : Number(row.height),
+                qty: row?.qty === '' || row?.qty == null ? 0 : Number(row.qty),
+            }),
+        );
+        const totalSqFt = computeAreaLineAmounts({ length_pairs: normalizedPairs }).totalSqFt;
+
+        return {
+            warehouse_id: Number(form.warehouse_id),
+            product_id: Number(form.product_id),
+            product_variant_id: productVariantId,
+            billing_mode: 'area_sqft',
+            length_pairs: normalizedPairs,
+            quantity: totalSqFt,
+            reserved_quantity: reserved,
+            status: form.status,
+        };
+    }
 
     return {
         warehouse_id: Number(form.warehouse_id),
         product_id: Number(form.product_id),
         product_variant_id: productVariantId,
-        billing_mode: 'length_ft',
-        length_pairs: normalizedPairs,
-        quantity: totalFt,
+        billing_mode: 'quantity',
+        length_pairs: null,
+        quantity: Number(form.quantity ?? 0),
         reserved_quantity: reserved,
         status: form.status,
     };
@@ -158,36 +215,56 @@ export default function StockForm({
         setVariantSearchQuery('');
     };
 
-    const isLength = (data.billing_mode ?? 'quantity') === 'length_ft';
+    const billingMode = data.billing_mode ?? 'quantity';
+    const isLength = billingMode === 'length_ft';
+    const isArea = billingMode === 'area_sqft';
     const pairs = Array.isArray(data.length_pairs)
         ? data.length_pairs
-        : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+        : isArea
+          ? emptyAreaPairs(DEFAULT_LENGTH_ROW_COUNT)
+          : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
     const lenAmt = computeLengthLineAmounts({
         ...data,
         length_pairs: pairs,
         rate_per_ft: 0,
         unit_price: 0,
     });
+    const areaAmt = computeAreaLineAmounts({
+        ...data,
+        length_pairs: pairs,
+    });
 
-    const syncLengthTotals = (draft) => {
-        if ((draft.billing_mode ?? 'quantity') !== 'length_ft') {
-            return draft;
+    const syncBillingTotalsForStock = (draft) => {
+        const mode = draft.billing_mode ?? 'quantity';
+        if (mode === 'length_ft') {
+            const p = Array.isArray(draft.length_pairs)
+                ? draft.length_pairs
+                : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+            let totalFt = 0;
+            for (const row of p) {
+                totalFt += Number(row?.length ?? 0) * Number(row?.qty ?? 0);
+            }
+            return {
+                ...draft,
+                length_pairs: p,
+                quantity: totalFt > 0 ? String(totalFt) : '',
+            };
         }
-        const p = Array.isArray(draft.length_pairs)
-            ? draft.length_pairs
-            : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
-        let totalFt = 0;
-        for (const row of p) {
-            totalFt += Number(row?.length ?? 0) * Number(row?.qty ?? 0);
+        if (mode === 'area_sqft') {
+            const p = Array.isArray(draft.length_pairs)
+                ? draft.length_pairs
+                : emptyAreaPairs(DEFAULT_LENGTH_ROW_COUNT);
+            const totalSqFt = computeAreaLineAmounts({ length_pairs: p }).totalSqFt;
+            return {
+                ...draft,
+                length_pairs: p,
+                quantity: totalSqFt > 0 ? String(totalSqFt) : '',
+            };
         }
-        return {
-            ...draft,
-            length_pairs: p,
-            quantity: totalFt > 0 ? String(totalFt) : '',
-        };
+        return draft;
     };
 
-    const toggleLengthStock = (checked) => {
+    const toggleStockBillingMode = (targetMode, checked) => {
         if (!checked) {
             setData((prev) => ({
                 ...prev,
@@ -198,62 +275,78 @@ export default function StockForm({
             }));
             return;
         }
-        setData((prev) =>
-            syncLengthTotals({
-                ...prev,
-                billing_mode: 'length_ft',
-                length_pairs:
-                    Array.isArray(prev.length_pairs) && prev.length_pairs.length > 0
-                        ? prev.length_pairs
-                        : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT),
-            }),
-        );
-    };
-
-    const updateLengthPair = (pairIdx, field, raw) => {
         setData((prev) => {
-            const p = Array.isArray(prev.length_pairs)
-                ? prev.length_pairs
-                : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
-            const nextPairs = [...p].map((row, j) =>
-                j === pairIdx ? { ...row, [field]: raw } : row,
-            );
-            return syncLengthTotals({ ...prev, length_pairs: nextPairs });
-        });
-    };
-
-    const addLengthPairRow = () => {
-        setData((prev) => {
-            const p = Array.isArray(prev.length_pairs)
-                ? prev.length_pairs
-                : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
-            return syncLengthTotals({
+            const empty =
+                targetMode === 'area_sqft'
+                    ? emptyAreaPairs(DEFAULT_LENGTH_ROW_COUNT)
+                    : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+            return syncBillingTotalsForStock({
                 ...prev,
-                length_pairs: [...p, { length: '', qty: '' }],
+                billing_mode: targetMode,
+                length_pairs: empty,
             });
         });
     };
 
-    const removeLengthPairRow = (pairIdx) => {
+    const updateBillingPairRow = (pairIdx, field, raw) => {
         setData((prev) => {
-            const p = Array.isArray(prev.length_pairs)
-                ? prev.length_pairs
-                : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+            const mode = prev.billing_mode ?? 'quantity';
+            const empty =
+                mode === 'area_sqft'
+                    ? emptyAreaPairs(DEFAULT_LENGTH_ROW_COUNT)
+                    : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+            const p = Array.isArray(prev.length_pairs) ? prev.length_pairs : empty;
+            const nextPairs = [...p].map((row, j) =>
+                j === pairIdx ? { ...row, [field]: raw } : row,
+            );
+            return syncBillingTotalsForStock({ ...prev, length_pairs: nextPairs });
+        });
+    };
+
+    const addBillingPairRowToStock = () => {
+        setData((prev) => {
+            const mode = prev.billing_mode ?? 'quantity';
+            const empty =
+                mode === 'area_sqft'
+                    ? emptyAreaPairs(DEFAULT_LENGTH_ROW_COUNT)
+                    : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+            const p = Array.isArray(prev.length_pairs) ? prev.length_pairs : empty;
+            const newRow =
+                mode === 'area_sqft'
+                    ? { width: '', height: '', qty: '' }
+                    : { length: '', qty: '' };
+            return syncBillingTotalsForStock({
+                ...prev,
+                length_pairs: [...p, newRow],
+            });
+        });
+    };
+
+    const removeBillingPairRowFromStock = (pairIdx) => {
+        setData((prev) => {
+            const mode = prev.billing_mode ?? 'quantity';
+            const empty =
+                mode === 'area_sqft'
+                    ? emptyAreaPairs(DEFAULT_LENGTH_ROW_COUNT)
+                    : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+            const p = Array.isArray(prev.length_pairs) ? prev.length_pairs : empty;
             if (p.length <= 1) {
                 return prev;
             }
             const nextPairs = p.filter((_, j) => j !== pairIdx);
-            return syncLengthTotals({ ...prev, length_pairs: nextPairs });
+            return syncBillingTotalsForStock({ ...prev, length_pairs: nextPairs });
         });
     };
 
-    const refreshLengthPairs = () => {
-        setData((prev) =>
-            syncLengthTotals({
-                ...prev,
-                length_pairs: emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT),
-            }),
-        );
+    const refreshBillingPairs = () => {
+        setData((prev) => {
+            const mode = prev.billing_mode ?? 'quantity';
+            const empty =
+                mode === 'area_sqft'
+                    ? emptyAreaPairs(DEFAULT_LENGTH_ROW_COUNT)
+                    : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
+            return syncBillingTotalsForStock({ ...prev, length_pairs: empty });
+        });
     };
 
     return (
@@ -512,12 +605,12 @@ export default function StockForm({
                 </div>
             </div>
 
-            <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-4">
+            <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50/80 p-4">
                 <label className="flex cursor-pointer items-start gap-3">
                     <input
                         type="checkbox"
                         checked={isLength}
-                        onChange={(e) => toggleLengthStock(e.target.checked)}
+                        onChange={(e) => toggleStockBillingMode('length_ft', e.target.checked)}
                         className="mt-1 rounded border-gray-300 text-brand focus:ring-brand"
                     />
                     <span>
@@ -525,8 +618,24 @@ export default function StockForm({
                             Length (ft) stock — length × qty rows
                         </span>
                         <span className="mt-0.5 block text-xs text-gray-600">
-                            Same as Sale: multiple rows of length and quantity; total feet (Σ length × qty) is
-                            saved as stock quantity so inventory matches length-billed sales.
+                            Multiple rows of length and quantity; total feet (Σ length × qty) is saved as
+                            stock quantity.
+                        </span>
+                    </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-3">
+                    <input
+                        type="checkbox"
+                        checked={isArea}
+                        onChange={(e) => toggleStockBillingMode('area_sqft', e.target.checked)}
+                        className="mt-1 rounded border-gray-300 text-brand focus:ring-brand"
+                    />
+                    <span>
+                        <span className="block text-sm font-semibold text-gray-900">
+                            Glass area (sq ft) stock — W × H × qty / 144
+                        </span>
+                        <span className="mt-0.5 block text-xs text-gray-600">
+                            Multiple width × height × qty rows; total square feet is saved as stock quantity.
                         </span>
                     </span>
                 </label>
@@ -552,7 +661,7 @@ export default function StockForm({
                                             placeholder="Length"
                                             value={row.length}
                                             onChange={(e) =>
-                                                updateLengthPair(pairIdx, 'length', e.target.value)
+                                                updateBillingPairRow(pairIdx, 'length', e.target.value)
                                             }
                                         />
                                         <span className="shrink-0 text-gray-400">×</span>
@@ -564,7 +673,7 @@ export default function StockForm({
                                             placeholder="Qty"
                                             value={row.qty}
                                             onChange={(e) =>
-                                                updateLengthPair(pairIdx, 'qty', e.target.value)
+                                                updateBillingPairRow(pairIdx, 'qty', e.target.value)
                                             }
                                         />
                                         {pairs.length > 1 ? (
@@ -572,7 +681,7 @@ export default function StockForm({
                                                 type="button"
                                                 title="Remove row"
                                                 className="shrink-0 rounded border border-gray-200 bg-white px-1.5 py-1 text-xs text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
-                                                onClick={() => removeLengthPairRow(pairIdx)}
+                                                onClick={() => removeBillingPairRowFromStock(pairIdx)}
                                             >
                                                 ×
                                             </button>
@@ -596,17 +705,38 @@ export default function StockForm({
                             <button
                                 type="button"
                                 className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/10"
-                                onClick={addLengthPairRow}
+                                onClick={addBillingPairRowToStock}
                             >
                                 + Add length row
                             </button>
                             <button
                                 type="button"
                                 className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700"
-                                onClick={refreshLengthPairs}
+                                onClick={refreshBillingPairs}
                             >
                                 Refresh rows
                             </button>
+                        </div>
+                    </div>
+                    {errors?.length_pairs && (
+                        <p className="text-sm text-red-600">{errors.length_pairs}</p>
+                    )}
+                </div>
+            ) : isArea ? (
+                <div className="space-y-4 rounded-xl border border-sky-200 bg-sky-50/30 p-4 shadow-sm">
+                    <GlassAreaBillingPanel
+                        pairs={pairs}
+                        onUpdatePair={updateBillingPairRow}
+                        onAddRow={addBillingPairRowToStock}
+                        onRemoveRow={removeBillingPairRowFromStock}
+                        onRefresh={refreshBillingPairs}
+                    />
+                    <div className="flex flex-wrap items-end gap-4 border-t border-gray-200 pt-3">
+                        <div>
+                            <p className="text-xs font-medium text-gray-600">Total sq ft (stock qty)</p>
+                            <p className="font-mono text-lg font-semibold text-gray-900">
+                                {areaAmt.totalSqFt.toFixed(4)}
+                            </p>
                         </div>
                     </div>
                     {errors?.length_pairs && (

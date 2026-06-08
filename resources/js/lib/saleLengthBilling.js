@@ -1,3 +1,5 @@
+import { computeAreaLineAmounts } from '@/lib/glassAreaBilling';
+
 /** @returns {{ length: string, qty: string }[]} */
 export function emptyLengthPairs(rowCount = 4) {
     return Array.from({ length: rowCount }, () => ({ length: '', qty: '' }));
@@ -41,6 +43,9 @@ export function lineNetBeforeTax(it) {
     const mode = it.billing_mode ?? 'quantity';
     if (mode === 'length_ft') {
         return computeLengthLineAmounts(it).net;
+    }
+    if (mode === 'area_sqft') {
+        return computeAreaLineAmounts(it).net;
     }
     return Number(it.quantity || 0) * Number(it.unit_price || 0);
 }

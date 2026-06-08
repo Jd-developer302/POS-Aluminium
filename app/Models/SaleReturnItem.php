@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Product\Product;
+use App\Models\Product\ProductVarient;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -55,5 +56,13 @@ class SaleReturnItem extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class, 'product_id');
+    }
+
+    /**
+     * @return BelongsTo<ProductVarient, $this>
+     */
+    public function productVarient(): BelongsTo
+    {
+        return $this->belongsTo(ProductVarient::class, 'product_variant_id');
     }
 }

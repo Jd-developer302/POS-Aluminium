@@ -7,6 +7,7 @@ use App\Models\Company\Branch;
 use App\Models\Company\Warehouse;
 use App\Models\InventoryMovement;
 use App\Models\Product\Product;
+use App\Support\InventoryMovementPresenter;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -29,6 +30,7 @@ class InventoryMovementController extends Controller
         $movements = InventoryMovement::query()
             ->with([
                 'product:id,name',
+                'productVarient:id,product_id,name,sku',
                 'branch:id,name',
                 'warehouse:id,name,branch_id',
                 'createdBy:id,name',
@@ -50,6 +52,26 @@ class InventoryMovementController extends Controller
             ->latest('id')
             ->paginate(20)
             ->withQueryString();
+
+        $billingMap = InventoryMovementPresenter::stockBillingModeMap($movements->getCollection());
+        $movements->through(function (InventoryMovement $movement) use ($billingMap): array {
+            $presented = InventoryMovementPresenter::present($movement, $billingMap);
+            $variant = $movement->productVarient;
+            $variantLabel = null;
+            if ($variant) {
+                $sku = trim((string) ($variant->sku ?? ''));
+                $name = trim((string) ($variant->name ?? ''));
+                if ($sku !== '' && $name !== '') {
+                    $variantLabel = $sku.' — '.$name;
+                } else {
+                    $variantLabel = $sku !== '' ? $sku : ($name !== '' ? $name : null);
+                }
+            }
+
+            return array_merge($movement->toArray(), $presented, [
+                'variant_label' => $variantLabel,
+            ]);
+        });
 
         $branches = Branch::query()->where('status', 'active')->get(['id', 'name']);
         $warehouses = Warehouse::query()->where('status', 'active')->get(['id', 'name', 'branch_id']);

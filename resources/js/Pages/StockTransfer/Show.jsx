@@ -1,6 +1,12 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Head, Link } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import {
+    formatAreaPairsSummary,
+    formatLengthPairsSummary,
+    transferDetailCutsColumnHeader,
+    transferDetailQtyColumnHeader,
+} from '@/lib/saleDetailTableRows';
 
 function formatDate(value) {
     if (!value) return '—';
@@ -20,6 +26,10 @@ function formatQty(value) {
 }
 
 export default function Show({ transfer }) {
+    const items = transfer.items ?? [];
+    const cutsColumnHeader = useMemo(() => transferDetailCutsColumnHeader(items), [items]);
+    const qtyColumnHeader = useMemo(() => transferDetailQtyColumnHeader(items), [items]);
+
     return (
         <AuthenticatedLayout
             header={<h1 className="text-2xl font-bold text-gray-900">Transfer Details</h1>}
@@ -59,24 +69,52 @@ export default function Show({ transfer }) {
                                 <thead className="bg-gray-50">
                                     <tr>
                                         <th className="px-4 py-3 text-start font-semibold text-gray-700">
-                                            Product ID
+                                            Product
                                         </th>
                                         <th className="px-4 py-3 text-start font-semibold text-gray-700">
-                                            Qty
+                                            Variant
+                                        </th>
+                                        <th className="px-4 py-3 text-start font-semibold text-gray-700">
+                                            {cutsColumnHeader}
+                                        </th>
+                                        <th className="px-4 py-3 text-start font-semibold text-gray-700">
+                                            {qtyColumnHeader}
                                         </th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100 bg-white">
-                                    {(transfer.items ?? []).map((it) => (
-                                        <tr key={it.id}>
-                                            <td className="px-4 py-3 font-medium text-gray-900">
-                                                {it.product_id}
-                                            </td>
-                                            <td className="px-4 py-3 text-gray-700">
-                                                {formatQty(it.quantity)}
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {(transfer.items ?? []).map((it) => {
+                                        const mode = it.billing_mode ?? 'quantity';
+                                        const isLength = mode === 'length_ft';
+                                        const isArea = mode === 'area_sqft';
+                                        const cutsLabel = isLength
+                                            ? formatLengthPairsSummary(it.length_pairs)
+                                            : isArea
+                                              ? formatAreaPairsSummary(it.length_pairs)
+                                              : '—';
+                                        const qtyLabel = isLength
+                                            ? `${formatQty(it.quantity)} ft`
+                                            : isArea
+                                              ? `${formatQty(it.quantity)} sq ft`
+                                              : formatQty(it.quantity);
+                                        const pv = it.product_varient ?? it.productVarient;
+                                        const variantLabel = pv
+                                            ? [pv.sku, pv.name].filter(Boolean).join(' — ')
+                                            : '—';
+
+                                        return (
+                                            <tr key={it.id}>
+                                                <td className="px-4 py-3 font-medium text-gray-900">
+                                                    {it.product?.name ?? `#${it.product_id}`}
+                                                </td>
+                                                <td className="px-4 py-3 text-gray-700">
+                                                    {variantLabel}
+                                                </td>
+                                                <td className="px-4 py-3 text-gray-700">{cutsLabel}</td>
+                                                <td className="px-4 py-3 text-gray-700">{qtyLabel}</td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>
@@ -95,4 +133,3 @@ export default function Show({ transfer }) {
         </AuthenticatedLayout>
     );
 }
-

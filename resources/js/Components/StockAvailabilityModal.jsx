@@ -58,6 +58,11 @@ export default function StockAvailabilityModal({
                             <tbody className="divide-y divide-gray-100 bg-white">
                                 {(info?.rows ?? []).map((row, idx) => {
                                     const isLength = row.billing_mode === 'length_ft';
+                                    const isArea = row.billing_mode === 'area_sqft';
+                                    const dimUnit = isLength ? ' ft' : isArea ? ' sq ft' : '';
+                                    const onHand = isLength || isArea
+                                        ? formatStockQty(row.length_pairs_sum_ft)
+                                        : formatStockQty(row.quantity_on_hand);
                                     const available = Number(row.available_quantity ?? 0);
                                     const low = available <= 0;
                                     return (
@@ -66,10 +71,8 @@ export default function StockAvailabilityModal({
                                                 {row.variant_label || '—'}
                                             </td>
                                             <td className="px-3 py-2 text-end tabular-nums text-gray-700">
-                                                {isLength
-                                                    ? formatStockQty(row.length_pairs_sum_ft)
-                                                    : formatStockQty(row.quantity_on_hand)}
-                                                {isLength ? ' ft' : ''}
+                                                {onHand}
+                                                {dimUnit}
                                             </td>
                                             <td className="px-3 py-2 text-end tabular-nums text-gray-700">
                                                 {formatStockQty(row.reserved_quantity)}
@@ -80,7 +83,7 @@ export default function StockAvailabilityModal({
                                                 }`}
                                             >
                                                 {formatStockQty(row.available_quantity)}
-                                                {isLength ? ' ft' : ''}
+                                                {dimUnit}
                                             </td>
                                             <td className="px-3 py-2 text-xs text-gray-500">
                                                 {row.length_pairs_summary || '—'}

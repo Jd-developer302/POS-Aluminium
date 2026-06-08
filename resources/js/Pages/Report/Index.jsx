@@ -32,7 +32,7 @@ const REPORTS = [
     },
     { type: 'purchase-orders', label: 'Purchase orders', description: 'PO lines ordered vs received' },
     { type: 'quotations', label: 'Quotations', description: 'Quote headers: customer, dates, status, totals, converted sale' },
-    { type: 'quotation-lines', label: 'Quotation lines', description: 'Each line: product, qty, pricing, billing mode, lengths (L×Q)' },
+    { type: 'quotation-lines', label: 'Quotation lines', description: 'Each line: product, cuts (L×Q / W×H×Q), qty, pricing, billing mode' },
     { type: 'supplier-aging', label: 'Supplier outstanding', description: 'AP due & aging by invoice' },
     { type: 'product-sales-summary', label: 'Product sales summary', description: 'Fast / slow movers by period' },
     { type: 'stock-valuation', label: 'Stock valuation', description: 'Qty × unit cost by warehouse' },

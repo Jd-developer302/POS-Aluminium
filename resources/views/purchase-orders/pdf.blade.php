@@ -78,8 +78,8 @@
                     <td>{{ $row['variant'] }}</td>
                     <td>{{ $row['length_qty'] }}</td>
                     <td>
-                        @if(($row['unit_cost_note'] ?? '') === 'Cost/ft' && ($row['unit_cost'] ?? '') !== '')
-                            <span style="font-size:9px;color:#555;">Cost/ft</span><br>{{ $row['unit_cost'] }}
+                        @if(in_array($row['unit_cost_note'] ?? '', ['Cost/ft', 'Cost/sqft'], true) && ($row['unit_cost'] ?? '') !== '')
+                            <span style="font-size:9px;color:#555;">{{ $row['unit_cost_note'] }}</span><br>{{ $row['unit_cost'] }}
                         @else
                             {{ $row['unit_cost'] }}
                         @endif

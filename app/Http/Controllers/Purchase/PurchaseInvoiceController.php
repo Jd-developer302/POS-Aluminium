@@ -13,7 +13,8 @@ use App\Models\PurchasePayment;
 use App\Models\Setting;
 use App\Models\Supplier\Supplier;
 use App\Services\InventoryService;
-use App\Support\LengthBillingPairs;
+use App\Support\BillingLineResolver;
+use App\Support\PurchaseOrderDisplayRows;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -164,6 +165,10 @@ class PurchaseInvoiceController extends Controller
             'payments',
         ]);
 
+        $purchase_invoice->items->each(function ($item): void {
+            $item->setAttribute('variant_label', PurchaseOrderDisplayRows::variantLabel($item));
+        });
+
         return Inertia::render('Purchase/Invoice/Show', [
             'invoice' => $purchase_invoice,
         ]);
@@ -224,6 +229,10 @@ class PurchaseInvoiceController extends Controller
             'items.productVarient:id,product_id,sku,name',
             'payments',
         ]);
+
+        $purchase_invoice->items->each(function ($item): void {
+            $item->setAttribute('variant_label', PurchaseOrderDisplayRows::variantLabel($item));
+        });
 
         return Inertia::render('Purchase/Invoice/Voucher', [
             'invoice' => $purchase_invoice,
@@ -363,9 +372,11 @@ class PurchaseInvoiceController extends Controller
             'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
             'items.*.product_variant_id' => ['nullable', 'integer', 'exists:product_varients,id'],
             'items.*.product_batch_id' => ['nullable', 'integer', 'exists:product_batches,id'],
-            'items.*.billing_mode' => ['nullable', Rule::in(['quantity', 'length_ft'])],
+            'items.*.billing_mode' => ['nullable', Rule::in(BillingLineResolver::allowedModes())],
             'items.*.length_pairs' => ['nullable', 'array'],
             'items.*.length_pairs.*.length' => ['nullable', 'numeric', 'min:0'],
+            'items.*.length_pairs.*.width' => ['nullable', 'numeric', 'min:0'],
+            'items.*.length_pairs.*.height' => ['nullable', 'numeric', 'min:0'],
             'items.*.length_pairs.*.qty' => ['nullable', 'numeric', 'min:0'],
             'items.*.quantity' => ['required', 'numeric', 'min:0'],
             'items.*.unit_cost' => ['required', 'numeric', 'min:0'],
@@ -429,24 +440,10 @@ class PurchaseInvoiceController extends Controller
                 }
             }
 
-            $mode = $row['billing_mode'] ?? 'quantity';
-            if ($mode === 'length_ft') {
-                $pairsRaw = is_array($row['length_pairs'] ?? null) ? $row['length_pairs'] : [];
-                $pairs = LengthBillingPairs::normalizeLengthPairsForStorage($pairsRaw);
-                $totalFt = LengthBillingPairs::totalFeetFromLengthPairs($pairs);
-                if ($totalFt <= 0) {
-                    throw ValidationException::withMessages([
-                        "items.$idx.length_pairs" => 'Length billing: total feet must be greater than zero.',
-                    ]);
-                }
-                if ((float) ($row['unit_cost'] ?? 0) <= 0) {
-                    throw ValidationException::withMessages([
-                        "items.$idx.unit_cost" => 'Length billing: cost per ft must be greater than zero.',
-                    ]);
-                }
-            } elseif ((float) ($row['quantity'] ?? 0) < 0.0001) {
+            $err = BillingLineResolver::validatePurchaseItem($row);
+            if ($err !== null) {
                 throw ValidationException::withMessages([
-                    "items.$idx.quantity" => 'Quantity must be greater than zero.',
+                    "items.$idx.quantity" => $err,
                 ]);
             }
         }
@@ -459,27 +456,14 @@ class PurchaseInvoiceController extends Controller
         $taxSum = 0.0;
 
         foreach ($data['items'] as $row) {
-            $billingMode = ($row['billing_mode'] ?? 'quantity') === 'length_ft' ? 'length_ft' : 'quantity';
+            $resolved = BillingLineResolver::resolvePurchaseLine($row);
+            $billingMode = $resolved['billing_mode'];
+            $normalizedPairs = $resolved['length_pairs'];
+            $qtyStored = $resolved['quantity'];
+            $unitCostStored = $resolved['unit_cost'];
+            $base = $resolved['base'];
             $lineDisc = (float) ($row['discount'] ?? 0);
             $taxRate = (float) ($row['tax_rate'] ?? 0);
-            $normalizedPairs = null;
-
-            if ($billingMode === 'length_ft') {
-                $pairs = is_array($row['length_pairs'] ?? null) ? $row['length_pairs'] : [];
-                $normalizedPairs = LengthBillingPairs::normalizeLengthPairsForStorage($pairs);
-                $totalFt = LengthBillingPairs::totalFeetFromLengthPairs($normalizedPairs);
-                $rate = round((float) ($row['unit_cost'] ?? 0), 2);
-                $gross = round($totalFt * $rate, 2);
-                $base = round(max(0.0, $gross - $lineDisc), 2);
-                $qtyStored = $totalFt;
-                $unitCostStored = $rate;
-            } else {
-                $qty = (float) $row['quantity'];
-                $unitCost = (float) $row['unit_cost'];
-                $base = round($qty * $unitCost - $lineDisc, 2);
-                $qtyStored = $qty;
-                $unitCostStored = $unitCost;
-            }
 
             if ($base < 0) {
                 throw ValidationException::withMessages([
@@ -493,7 +477,7 @@ class PurchaseInvoiceController extends Controller
 
             $linePayloads[] = [
                 'product_id' => (int) $row['product_id'],
-                'product_variant_id' => ! empty($row['product_variant_id']) ? (int) $row['product_variant_id'] : null,
+                'product_variant_id' => PurchaseOrderDisplayRows::resolveLineVariantId($row),
                 'product_batch_id' => ! empty($row['product_batch_id']) ? (int) $row['product_batch_id'] : null,
                 'billing_mode' => $billingMode,
                 'length_pairs' => $normalizedPairs,

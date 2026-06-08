@@ -167,6 +167,8 @@ final class LengthCutStockService
                 reference: (string) ($invoice->invoice_number ?? ''),
                 createdBy: $createdBy,
                 notes: $notes ?? 'Purchase received (cut-length)',
+                billingMode: 'length_ft',
+                lengthPairs: is_array($item->length_pairs) ? $item->length_pairs : null,
             );
             $this->adjustBranchProductStockQty((int) $invoice->branch_id, (int) $item->product_id, $item->product_variant_id ? (int) $item->product_variant_id : null, $delta);
         }
@@ -245,6 +247,8 @@ final class LengthCutStockService
             reference: (string) ($sale->sale_number ?? ''),
             createdBy: $createdBy,
             notes: $notes ?? 'Sale (cut-length)',
+            billingMode: 'length_ft',
+            lengthPairs: $pairs,
         );
 
         $this->adjustBranchProductStockQty((int) $sale->branch_id, (int) $item->product_id, $item->product_variant_id ? (int) $item->product_variant_id : null, -$ftSold);
@@ -323,6 +327,8 @@ final class LengthCutStockService
                 reference: (string) ($sale->sale_number ?? ''),
                 createdBy: $createdBy,
                 notes: $notes ?? 'Sale return (cut-length)',
+                billingMode: 'length_ft',
+                lengthPairs: $pairs !== [] ? $pairs : null,
             );
             $this->adjustBranchProductStockQty((int) $sale->branch_id, (int) $item->product_id, $item->product_variant_id ? (int) $item->product_variant_id : null, $ftAdded);
         }
@@ -467,6 +473,8 @@ final class LengthCutStockService
         ?string $reference,
         ?int $createdBy,
         ?string $notes,
+        ?string $billingMode = null,
+        ?array $lengthPairs = null,
     ): void {
         InventoryMovement::query()->create([
             'branch_id' => $branchId,
@@ -476,6 +484,8 @@ final class LengthCutStockService
             'product_batch_id' => null,
             'direction' => $direction,
             'quantity' => $qty,
+            'billing_mode' => $billingMode,
+            'length_pairs' => $lengthPairs,
             'before_qty' => $beforeQty,
             'after_qty' => $afterQty,
             'source_type' => $sourceType,

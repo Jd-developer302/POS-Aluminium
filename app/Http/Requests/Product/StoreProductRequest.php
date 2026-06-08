@@ -24,6 +24,10 @@ class StoreProductRequest extends FormRequest
             $merge['barcode'] = null;
         }
 
+        if ($this->has('sub_category_id') && $this->input('sub_category_id') === '') {
+            $merge['sub_category_id'] = null;
+        }
+
         $variants = $this->input('variants');
         if (is_array($variants)) {
             foreach ($variants as $i => $row) {
@@ -57,7 +61,7 @@ class StoreProductRequest extends FormRequest
         $rules = [
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'sub_category_id' => [
-                'required',
+                'nullable',
                 'integer',
                 Rule::exists('sub_categories', 'id')->where(
                     fn ($q) => $q->where('category_id', $categoryId),

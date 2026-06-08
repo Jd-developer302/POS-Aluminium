@@ -1,7 +1,7 @@
 import React from 'react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, useForm, usePage } from '@inertiajs/react';
-import StockForm, { stockLengthPairsForForm, transformStockSubmitData } from './_Form';
+import StockForm, { stockPairsForForm, transformStockSubmitData } from './_Form';
 
 export default function Edit({ stock, branches, warehouses, products }) {
     const { flash } = usePage().props;
@@ -12,7 +12,7 @@ export default function Edit({ stock, branches, warehouses, products }) {
         product_id: stock?.product_id ?? '',
         product_variant_id: stock?.product_variant_id ?? '',
         billing_mode: stock?.billing_mode ?? 'quantity',
-        length_pairs: stockLengthPairsForForm(stock),
+        length_pairs: stockPairsForForm(stock),
         quantity: stock?.quantity ?? 0,
         reserved_quantity: stock?.reserved_quantity ?? 0,
         status: stock?.status ?? 'active',

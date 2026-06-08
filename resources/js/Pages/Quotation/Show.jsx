@@ -170,6 +170,11 @@ export default function Show({ quotation }) {
                                                         <span className="text-xs text-gray-500">Rate/ft </span>
                                                         {money(row.unitPriceLabel)}
                                                     </span>
+                                                ) : row.unitPriceKind === 'rate_sqft' ? (
+                                                    <span>
+                                                        <span className="text-xs text-gray-500">Rate/sqft </span>
+                                                        {money(row.unitPriceLabel)}
+                                                    </span>
                                                 ) : (
                                                     money(row.unitPriceLabel)
                                                 )}

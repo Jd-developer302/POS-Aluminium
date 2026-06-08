@@ -10,6 +10,8 @@ use App\Models\Product\ProductVarient;
 use App\Models\Setting;
 use App\Models\Stock;
 use App\Services\LengthCutStockService;
+use App\Support\BillingLineResolver;
+use App\Support\GlassAreaBillingPairs;
 use App\Support\LengthBillingPairs;
 use Barryvdh\DomPDF\PDF;
 use Carbon\Carbon;
@@ -51,19 +53,31 @@ class StockController extends Controller
 
     private function attachLengthPairMetrics(Stock $stock): void
     {
-        if (($stock->billing_mode ?? 'quantity') !== 'length_ft') {
-            $stock->setAttribute('length_pairs_sum_ft', null);
-            $stock->setAttribute('length_pairs_qty_matches_sum', null);
+        $billing = (string) ($stock->billing_mode ?? 'quantity');
+        $raw = is_array($stock->length_pairs) ? $stock->length_pairs : [];
+
+        if ($billing === 'length_ft') {
+            $normalized = LengthBillingPairs::normalizeLengthPairsForStorage($raw);
+            $sumFt = LengthBillingPairs::totalFeetFromLengthPairs($normalized);
+            $stock->setAttribute('length_pairs_sum_ft', $sumFt);
+            $qty = (float) $stock->quantity;
+            $stock->setAttribute('length_pairs_qty_matches_sum', abs($sumFt - $qty) < 0.0001);
 
             return;
         }
 
-        $raw = is_array($stock->length_pairs) ? $stock->length_pairs : [];
-        $normalized = LengthBillingPairs::normalizeLengthPairsForStorage($raw);
-        $sumFt = LengthBillingPairs::totalFeetFromLengthPairs($normalized);
-        $stock->setAttribute('length_pairs_sum_ft', $sumFt);
-        $qty = (float) $stock->quantity;
-        $stock->setAttribute('length_pairs_qty_matches_sum', abs($sumFt - $qty) < 0.0001);
+        if ($billing === 'area_sqft') {
+            $normalized = GlassAreaBillingPairs::normalizeAreaPairsForStorage($raw);
+            $sumSqFt = GlassAreaBillingPairs::totalSqFtFromAreaPairs($normalized);
+            $stock->setAttribute('length_pairs_sum_ft', $sumSqFt);
+            $qty = (float) $stock->quantity;
+            $stock->setAttribute('length_pairs_qty_matches_sum', abs($sumSqFt - $qty) < 0.0001);
+
+            return;
+        }
+
+        $stock->setAttribute('length_pairs_sum_ft', null);
+        $stock->setAttribute('length_pairs_qty_matches_sum', null);
     }
 
     /**
@@ -126,6 +140,37 @@ class StockController extends Controller
         return $parts !== [] ? implode(' + ', $parts) : '';
     }
 
+    private function areaPairsSummaryForExport(?array $pairs): string
+    {
+        if (! is_array($pairs) || $pairs === []) {
+            return '';
+        }
+        $parts = [];
+        foreach ($pairs as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $w = (float) ($row['width'] ?? 0);
+            $h = (float) ($row['height'] ?? 0);
+            $q = (float) ($row['qty'] ?? 0);
+            if ($w <= 0 && $h <= 0 && $q <= 0) {
+                continue;
+            }
+            $parts[] = $w.'×'.$h.'×'.$q;
+        }
+
+        return $parts !== [] ? implode(' + ', $parts) : '';
+    }
+
+    private function cutsSummaryForExport(string $billing, ?array $pairs): string
+    {
+        if ($billing === 'area_sqft') {
+            return $this->areaPairsSummaryForExport($pairs);
+        }
+
+        return $this->lengthPairsSummaryForExport($pairs);
+    }
+
     /**
      * @return array<string, string|int|float|null>
      */
@@ -145,10 +190,11 @@ class StockController extends Controller
             : '';
 
         $billing = (string) ($stock->billing_mode ?? 'quantity');
-        $lengthSummary = $this->lengthPairsSummaryForExport(is_array($stock->length_pairs) ? $stock->length_pairs : []);
+        $rawPairs = is_array($stock->length_pairs) ? $stock->length_pairs : [];
+        $lengthSummary = $this->cutsSummaryForExport($billing, $rawPairs);
 
-        $qtyUnits = $billing === 'length_ft' ? '' : (string) $stock->quantity;
-        $actualFt = $billing === 'length_ft' ? (string) $stock->quantity : '';
+        $qtyUnits = in_array($billing, ['length_ft', 'area_sqft'], true) ? '' : (string) $stock->quantity;
+        $actualFt = in_array($billing, ['length_ft', 'area_sqft'], true) ? (string) $stock->quantity : '';
         $sellingPrice = $this->resolveSellingPriceForExport($stock);
         $updated = $this->formatStockUpdatedForExport($stock);
         $warehouseName = $this->resolveWarehouseNameForExport($stock);
@@ -490,35 +536,30 @@ class StockController extends Controller
             'product_id' => ['required', 'integer', 'exists:products,id'],
             'product_variant_id' => ['nullable', 'integer', 'exists:product_varients,id'],
             'warehouse_id' => ['required', 'integer', 'exists:warehouses,id'],
-            'billing_mode' => ['nullable', Rule::in(['quantity', 'length_ft'])],
+            'billing_mode' => ['nullable', Rule::in(BillingLineResolver::allowedModes())],
             'length_pairs' => ['nullable', 'array'],
             'length_pairs.*.length' => ['nullable', 'numeric', 'min:0'],
+            'length_pairs.*.width' => ['nullable', 'numeric', 'min:0'],
+            'length_pairs.*.height' => ['nullable', 'numeric', 'min:0'],
             'length_pairs.*.qty' => ['nullable', 'numeric', 'min:0'],
             'quantity' => ['nullable', 'numeric', 'min:0'],
             'reserved_quantity' => ['nullable', 'numeric', 'min:0'],
             'status' => ['required', 'in:active,inactive'],
         ]);
 
-        $mode = ($data['billing_mode'] ?? 'quantity') === 'length_ft' ? 'length_ft' : 'quantity';
+        $resolved = BillingLineResolver::resolveStockRow([
+            'billing_mode' => $data['billing_mode'] ?? 'quantity',
+            'length_pairs' => $request->input('length_pairs'),
+            'quantity' => $data['quantity'] ?? 0,
+        ]);
+        if (in_array($resolved['billing_mode'], ['length_ft', 'area_sqft'], true) && $resolved['quantity'] <= 0) {
+            $label = $resolved['billing_mode'] === 'area_sqft' ? 'Glass area stock: total sq ft' : 'Length stock: total feet';
 
-        if ($mode === 'length_ft') {
-            $pairsRaw = is_array($request->input('length_pairs')) ? $request->input('length_pairs') : [];
-            $normalizedPairs = LengthBillingPairs::normalizeLengthPairsForStorage($pairsRaw);
-            $totalFt = LengthBillingPairs::totalFeetFromLengthPairs($normalizedPairs);
-            if ($totalFt <= 0) {
-                return redirect()
-                    ->back()
-                    ->withInput()
-                    ->with('error', 'Length stock: total feet must be greater than zero (check length × qty rows).');
-            }
-            $data['billing_mode'] = 'length_ft';
-            $data['length_pairs'] = $normalizedPairs;
-            $data['quantity'] = $totalFt;
-        } else {
-            $data['billing_mode'] = 'quantity';
-            $data['length_pairs'] = null;
-            $data['quantity'] = $data['quantity'] ?? 0;
+            return redirect()->back()->withInput()->with('error', $label.' must be greater than zero.');
         }
+        $data['billing_mode'] = $resolved['billing_mode'];
+        $data['length_pairs'] = $resolved['length_pairs'];
+        $data['quantity'] = $resolved['quantity'];
 
         $data['reserved_quantity'] = $data['reserved_quantity'] ?? 0;
 
@@ -613,35 +654,30 @@ class StockController extends Controller
             'product_id' => ['required', 'integer', 'exists:products,id'],
             'product_variant_id' => ['nullable', 'integer', 'exists:product_varients,id'],
             'warehouse_id' => ['required', 'integer', 'exists:warehouses,id'],
-            'billing_mode' => ['nullable', Rule::in(['quantity', 'length_ft'])],
+            'billing_mode' => ['nullable', Rule::in(BillingLineResolver::allowedModes())],
             'length_pairs' => ['nullable', 'array'],
             'length_pairs.*.length' => ['nullable', 'numeric', 'min:0'],
+            'length_pairs.*.width' => ['nullable', 'numeric', 'min:0'],
+            'length_pairs.*.height' => ['nullable', 'numeric', 'min:0'],
             'length_pairs.*.qty' => ['nullable', 'numeric', 'min:0'],
             'quantity' => ['nullable', 'numeric', 'min:0'],
             'reserved_quantity' => ['required', 'numeric', 'min:0'],
             'status' => ['required', 'in:active,inactive'],
         ]);
 
-        $mode = ($data['billing_mode'] ?? 'quantity') === 'length_ft' ? 'length_ft' : 'quantity';
+        $resolved = BillingLineResolver::resolveStockRow([
+            'billing_mode' => $data['billing_mode'] ?? 'quantity',
+            'length_pairs' => $request->input('length_pairs'),
+            'quantity' => $data['quantity'] ?? 0,
+        ]);
+        if (in_array($resolved['billing_mode'], ['length_ft', 'area_sqft'], true) && $resolved['quantity'] <= 0) {
+            $label = $resolved['billing_mode'] === 'area_sqft' ? 'Glass area stock: total sq ft' : 'Length stock: total feet';
 
-        if ($mode === 'length_ft') {
-            $pairsRaw = is_array($request->input('length_pairs')) ? $request->input('length_pairs') : [];
-            $normalizedPairs = LengthBillingPairs::normalizeLengthPairsForStorage($pairsRaw);
-            $totalFt = LengthBillingPairs::totalFeetFromLengthPairs($normalizedPairs);
-            if ($totalFt <= 0) {
-                return redirect()
-                    ->back()
-                    ->withInput()
-                    ->with('error', 'Length stock: total feet must be greater than zero (check length × qty rows).');
-            }
-            $data['billing_mode'] = 'length_ft';
-            $data['length_pairs'] = $normalizedPairs;
-            $data['quantity'] = $totalFt;
-        } else {
-            $data['billing_mode'] = 'quantity';
-            $data['length_pairs'] = null;
-            $data['quantity'] = $data['quantity'] ?? 0;
+            return redirect()->back()->withInput()->with('error', $label.' must be greater than zero.');
         }
+        $data['billing_mode'] = $resolved['billing_mode'];
+        $data['length_pairs'] = $resolved['length_pairs'];
+        $data['quantity'] = $resolved['quantity'];
 
         $variantId = isset($data['product_variant_id']) && (int) $data['product_variant_id'] > 0
             ? (int) $data['product_variant_id']

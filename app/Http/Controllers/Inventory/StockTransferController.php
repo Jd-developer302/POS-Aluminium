@@ -6,12 +6,15 @@ use App\Http\Controllers\Controller;
 use App\Models\Company\Branch;
 use App\Models\Company\Warehouse;
 use App\Models\Product\Product;
+use App\Models\Product\ProductVarient;
 use App\Models\StockTransfer;
 use App\Models\StockTransferItem;
 use App\Services\InventoryService;
+use App\Support\BillingLineResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
 class StockTransferController extends Controller
@@ -32,7 +35,7 @@ class StockTransferController extends Controller
         return Inertia::render('StockTransfer/Create', [
             'branches' => Branch::query()->where('status', 'active')->get(['id', 'name']),
             'warehouses' => Warehouse::query()->where('status', 'active')->get(['id', 'name', 'branch_id']),
-            'products' => Product::query()->where('status', 'active')->orderBy('name')->limit(300)->get(['id', 'name']),
+            'products' => $this->transferFormProducts(),
         ]);
     }
 
@@ -50,13 +53,61 @@ class StockTransferController extends Controller
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:products,id'],
             'items.*.product_variant_id' => ['nullable', 'exists:product_varients,id'],
-            'items.*.quantity' => ['required', 'numeric', 'min:0.0001'],
+            'items.*.billing_mode' => ['nullable', Rule::in(BillingLineResolver::allowedModes())],
+            'items.*.length_pairs' => ['nullable', 'array'],
+            'items.*.length_pairs.*.length' => ['nullable', 'numeric', 'min:0'],
+            'items.*.length_pairs.*.width' => ['nullable', 'numeric', 'min:0'],
+            'items.*.length_pairs.*.height' => ['nullable', 'numeric', 'min:0'],
+            'items.*.length_pairs.*.qty' => ['nullable', 'numeric', 'min:0'],
+            'items.*.quantity' => ['required', 'numeric', 'min:0'],
         ]);
 
+        foreach ($validated['items'] as $it) {
+            $mode = BillingLineResolver::normalizeMode($it['billing_mode'] ?? null);
+            if ($mode === 'length_ft' || $mode === 'area_sqft') {
+                $resolved = BillingLineResolver::resolveStockRow([
+                    'billing_mode' => $mode,
+                    'length_pairs' => $it['length_pairs'] ?? [],
+                    'quantity' => 0,
+                ]);
+                if ($resolved['quantity'] <= 0) {
+                    return redirect()
+                        ->back()
+                        ->withInput()
+                        ->with('error', $mode === 'area_sqft'
+                            ? 'Glass transfer: total sq ft must be greater than zero.'
+                            : 'Length transfer: total feet must be greater than zero.');
+                }
+            } elseif ((float) ($it['quantity'] ?? 0) < 0.0001) {
+                return redirect()
+                    ->back()
+                    ->withInput()
+                    ->with('error', 'Each line must have a quantity greater than zero.');
+            }
+        }
+
         $transfer = DB::transaction(function () use ($validated, $inventory): StockTransfer {
-            $totalQty = 0;
+            $linePayloads = [];
+            $totalQty = 0.0;
+
             foreach ($validated['items'] as $it) {
-                $totalQty += (float) $it['quantity'];
+                $resolved = BillingLineResolver::resolveStockRow([
+                    'billing_mode' => $it['billing_mode'] ?? 'quantity',
+                    'length_pairs' => $it['length_pairs'] ?? [],
+                    'quantity' => $it['quantity'] ?? 0,
+                ]);
+                $qty = (float) $resolved['quantity'];
+                $totalQty += $qty;
+                $linePayloads[] = [
+                    'product_id' => (int) $it['product_id'],
+                    'product_variant_id' => ! empty($it['product_variant_id'])
+                        ? (int) $it['product_variant_id']
+                        : null,
+                    'billing_mode' => $resolved['billing_mode'],
+                    'length_pairs' => $resolved['length_pairs'],
+                    'quantity' => $qty,
+                    'received_quantity' => $qty,
+                ];
             }
 
             $transfer = StockTransfer::create([
@@ -72,13 +123,10 @@ class StockTransferController extends Controller
                 'total_quantity' => $totalQty,
             ]);
 
-            foreach ($validated['items'] as $it) {
+            foreach ($linePayloads as $row) {
                 StockTransferItem::create([
                     'stock_transfer_id' => $transfer->id,
-                    'product_id' => $it['product_id'],
-                    'product_variant_id' => $it['product_variant_id'] ?? null,
-                    'quantity' => $it['quantity'],
-                    'received_quantity' => $it['quantity'],
+                    ...$row,
                 ]);
             }
 
@@ -94,7 +142,9 @@ class StockTransferController extends Controller
                     toWarehouseId: (int) $transfer->to_warehouse_id,
                     fromBranchId: (int) $transfer->from_branch_id,
                     toBranchId: (int) $transfer->to_branch_id,
-                    items: $transfer->items()->get(['product_id', 'product_variant_id', 'quantity', 'received_quantity'])->toArray(),
+                    items: $transfer->items()
+                        ->get(['product_id', 'product_variant_id', 'quantity', 'received_quantity', 'billing_mode', 'length_pairs'])
+                        ->toArray(),
                 );
             }
 
@@ -108,10 +158,60 @@ class StockTransferController extends Controller
 
     public function show(StockTransfer $stock_transfer)
     {
-        $stock_transfer->load('items');
+        $stock_transfer->load([
+            'items',
+            'items.product:id,name',
+            'items.productVarient:id,product_id,name,sku',
+        ]);
 
         return Inertia::render('StockTransfer/Show', [
             'transfer' => $stock_transfer,
         ]);
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    private function transferFormProducts()
+    {
+        return Product::query()
+            ->where('status', 'active')
+            ->with([
+                'varients' => fn ($q) => $q
+                    ->where('status', 'active')
+                    ->orderBy('sku')
+                    ->with([
+                        'varientAttributes.attribute:id,name',
+                        'varientAttributes.attributeValue:id,value',
+                    ]),
+            ])
+            ->orderBy('name')
+            ->limit(300)
+            ->get(['id', 'name', 'type'])
+            ->map(static function (Product $p): array {
+                return [
+                    'id' => $p->id,
+                    'name' => $p->name,
+                    'type' => $p->type,
+                    'variants' => $p->varients
+                        ->map(static function (ProductVarient $v): array {
+                            return [
+                                'id' => $v->id,
+                                'sku' => $v->sku,
+                                'name' => $v->name,
+                                'attribute_labels' => $v->varientAttributes
+                                    ->map(static fn ($pva): array => [
+                                        'attribute' => $pva->attribute?->name ?? '',
+                                        'value' => $pva->attributeValue?->value ?? '',
+                                    ])
+                                    ->filter(static fn (array $row): bool => $row['attribute'] !== '' || $row['value'] !== '')
+                                    ->values()
+                                    ->all(),
+                            ];
+                        })
+                        ->values()
+                        ->all(),
+                ];
+            });
     }
 }

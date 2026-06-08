@@ -111,6 +111,7 @@ const SELECTABLE_ROW_REPORTS = new Set([
     'quotation-lines',
     'inventory-movements',
     'purchase-order-notifications',
+    'purchase-orders',
     'purchase-invoices',
     'stock-valuation',
 ]);

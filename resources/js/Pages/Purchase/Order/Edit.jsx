@@ -2,7 +2,10 @@ import React from 'react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, useForm, usePage } from '@inertiajs/react';
 import { transformPurchaseOrderItems } from '@/lib/purchaseOrderSubmitItems';
-import PurchaseOrderForm, { purchaseLengthPairsForForm } from './_Form';
+import PurchaseOrderForm, {
+    purchaseAreaPairsForForm,
+    purchaseLengthPairsForForm,
+} from './_Form';
 
 function toDateInput(value) {
     if (value == null || value === '') {
@@ -36,21 +39,25 @@ export default function Edit({
         shipping_cost: order.shipping_cost ?? 0,
         discount_amount: order.discount_amount ?? 0,
         paid_amount: order.paid_amount ?? 0,
-        items: (order.items ?? []).map((it) => ({
+        items: (order.items ?? []).map((it) => {
+            const billingMode = it.billing_mode ?? 'quantity';
+            return {
             product_id: it.product_id,
             product_variant_id: it.product_variant_id != null ? String(it.product_variant_id) : '',
-            billing_mode: it.billing_mode ?? 'quantity',
-            length_pairs: purchaseLengthPairsForForm(it.length_pairs),
-            rate_per_ft:
-                (it.billing_mode ?? 'quantity') === 'length_ft'
-                    ? String(it.unit_cost ?? '')
-                    : '',
+            billing_mode: billingMode,
+            length_pairs:
+                billingMode === 'area_sqft'
+                    ? purchaseAreaPairsForForm(it.length_pairs)
+                    : purchaseLengthPairsForForm(it.length_pairs),
+            rate_per_ft: billingMode === 'length_ft' ? String(it.unit_cost ?? '') : '',
+            rate_per_sqft: billingMode === 'area_sqft' ? String(it.unit_cost ?? '') : '',
             quantity: it.quantity,
             received_quantity: it.received_quantity ?? 0,
             unit_cost: it.unit_cost,
             discount: it.discount ?? 0,
             tax_rate: it.tax_rate ?? 0,
-        })),
+        };
+        }),
     });
 
     const submit = (e) => {

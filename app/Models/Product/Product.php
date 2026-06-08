@@ -13,7 +13,7 @@ use Illuminate\Support\Str;
 /**
  * @property int $id
  * @property int $category_id
- * @property int $sub_category_id
+ * @property int|null $sub_category_id
  * @property int|null $brand_id
  * @property int $unit_id
  * @property int|null $tax_id

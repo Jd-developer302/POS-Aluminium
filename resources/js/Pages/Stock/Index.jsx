@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Pagination from '@/Components/Pagination';
+import { formatAreaPairsSummary, formatLengthPairsSummary } from '@/lib/saleDetailTableRows';
 import { formatVariantAttributes } from '@/lib/variantLabel';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 
@@ -14,17 +15,20 @@ function formatQty(value) {
     });
 }
 
-function formatLengthPairsSummary(pairs) {
-    if (!Array.isArray(pairs)) return '—';
-    const parts = pairs
-        .map((r) => {
-            const l = Number(r?.length ?? 0);
-            const q = Number(r?.qty ?? 0);
-            if (l <= 0 && q <= 0) return null;
-            return `${l}×${q}`;
-        })
-        .filter(Boolean);
-    return parts.length ? parts.join(' + ') : '—';
+function stockBillingMode(s) {
+    return s?.billing_mode ?? 'quantity';
+}
+
+function isLengthStock(s) {
+    return stockBillingMode(s) === 'length_ft';
+}
+
+function isAreaStock(s) {
+    return stockBillingMode(s) === 'area_sqft';
+}
+
+function isCutStock(s) {
+    return isLengthStock(s) || isAreaStock(s);
 }
 
 const iconStroke = 1.75;
@@ -199,6 +203,31 @@ export default function Index({
     }, [warehouses]);
 
     const availableWarehouses = whByBranch.get(String(branchId)) ?? warehouses ?? [];
+
+    const cutsColumnHeader = useMemo(() => {
+        const rows = stocks?.data ?? [];
+        if (rows.length === 0) {
+            return 'Cuts (L×Q / W×H×Q)';
+        }
+        if (rows.every(isAreaStock)) {
+            return 'Sizes (W×H×Q)';
+        }
+        if (rows.every(isLengthStock)) {
+            return 'Lengths (L×Q)';
+        }
+        return 'Cuts / sizes';
+    }, [stocks?.data]);
+
+    const onHandColumnHeader = useMemo(() => {
+        const rows = stocks?.data ?? [];
+        if (rows.every(isAreaStock)) {
+            return 'Actual sq ft (on hand)';
+        }
+        if (rows.every(isLengthStock)) {
+            return 'Actual ft (on hand)';
+        }
+        return 'On hand (ft / sq ft)';
+    }, [stocks?.data]);
 
     const run = (e) => {
         e?.preventDefault();
@@ -519,13 +548,13 @@ export default function Index({
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Warehouse</th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Branch</th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">
-                                    Lengths (L×Q)
+                                    {cutsColumnHeader}
                                 </th>
                                 <th
                                     className="px-4 py-3 text-start font-semibold text-gray-700"
-                                    title="Feet currently on hand in inventory (after sales, transfers, etc.)."
+                                    title="Length (ft) or glass area (sq ft) currently on hand after sales, transfers, etc."
                                 >
-                                    Actual ft (on hand)
+                                    {onHandColumnHeader}
                                 </th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Qty (units)</th>
                                 <th className="px-4 py-3 text-start font-semibold text-gray-700">Reserved</th>
@@ -574,7 +603,7 @@ export default function Index({
                                             {s.warehouse?.branch?.name ?? '—'}
                                         </td>
                                         <td className="max-w-[16rem] px-4 py-3 text-gray-700">
-                                            {(s.billing_mode ?? 'quantity') === 'length_ft' ? (
+                                            {isLengthStock(s) ? (
                                                 <div>
                                                     <div>{formatLengthPairsSummary(s.length_pairs)}</div>
                                                     {s.length_pairs_sum_ft != null && (
@@ -583,12 +612,21 @@ export default function Index({
                                                         </p>
                                                     )}
                                                 </div>
+                                            ) : isAreaStock(s) ? (
+                                                <div>
+                                                    <div>{formatAreaPairsSummary(s.length_pairs)}</div>
+                                                    {s.length_pairs_sum_ft != null && (
+                                                        <p className="mt-1 text-xs text-gray-500">
+                                                            Σ rows: {formatQty(s.length_pairs_sum_ft)} sq ft
+                                                        </p>
+                                                    )}
+                                                </div>
                                             ) : (
                                                 '—'
                                             )}
                                         </td>
                                         <td className="px-4 py-3 text-gray-800">
-                                            {(s.billing_mode ?? 'quantity') === 'length_ft' ? (
+                                            {isCutStock(s) ? (
                                                 <div>
                                                     <div className="flex flex-wrap items-center gap-2">
                                                         <span className="font-semibold text-gray-900">
@@ -607,10 +645,11 @@ export default function Index({
                                                         s.length_pairs_sum_ft != null && (
                                                             <p
                                                                 className="mt-1 text-xs text-amber-800"
-                                                                title="Saved length rows may be from the last manual edit; on-hand quantity is what inventory uses after sales and movements."
+                                                                title="Saved cut rows may be from the last manual edit; on-hand quantity is what inventory uses after sales and movements."
                                                             >
                                                                 Saved rows Σ:{' '}
-                                                                {formatQty(s.length_pairs_sum_ft)} ft — differs
+                                                                {formatQty(s.length_pairs_sum_ft)}{' '}
+                                                                {isAreaStock(s) ? 'sq ft' : 'ft'} — differs
                                                                 from on hand
                                                             </p>
                                                         )}
@@ -622,11 +661,9 @@ export default function Index({
                                         <td className="px-4 py-3">
                                             <div className="flex flex-wrap items-center gap-2">
                                                 <span className="font-semibold text-gray-900">
-                                                    {(s.billing_mode ?? 'quantity') === 'length_ft'
-                                                        ? '—'
-                                                        : formatQty(s.quantity)}
+                                                    {isCutStock(s) ? '—' : formatQty(s.quantity)}
                                                 </span>
-                                                {(s.billing_mode ?? 'quantity') !== 'length_ft' &&
+                                                {!isCutStock(s) &&
                                                     s.is_low_stock && (
                                                         <span
                                                             className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900"

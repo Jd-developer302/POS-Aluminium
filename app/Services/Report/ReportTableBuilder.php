@@ -25,6 +25,7 @@ use App\Models\StockTransfer;
 use App\Models\Supplier\Customer;
 use App\Models\Supplier\Supplier;
 use App\Models\User;
+use App\Support\InventoryMovementPresenter;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -283,6 +284,8 @@ final class ReportTableBuilder
             ['key' => 'source_type', 'label' => 'Source'],
             ['key' => 'reference', 'label' => 'Reference'],
             ['key' => 'product', 'label' => 'Product'],
+            ['key' => 'variant', 'label' => 'Variant'],
+            ['key' => 'cuts', 'label' => 'Cuts / sizes'],
             ['key' => 'branch', 'label' => 'Branch'],
             ['key' => 'warehouse', 'label' => 'Warehouse'],
             ['key' => 'quantity', 'label' => 'Qty'],
@@ -296,6 +299,7 @@ final class ReportTableBuilder
         $q = InventoryMovement::query()
             ->with([
                 'product:id,name',
+                'productVarient:id,product_id,name,sku',
                 'branch:id,name',
                 'warehouse:id,name,branch_id',
                 'createdBy:id,name',
@@ -317,7 +321,21 @@ final class ReportTableBuilder
             ->when($request->query('date_to'), fn (Builder $b, $v) => $b->whereDate('created_at', '<=', $v))
             ->latest('id');
 
-        $mapRow = function (InventoryMovement $m): array {
+        $mapRow = function (InventoryMovement $m, array $billingMap): array {
+            $presented = InventoryMovementPresenter::present($m, $billingMap);
+
+            $variant = $m->productVarient;
+            $variantLabel = '—';
+            if ($variant) {
+                $sku = trim((string) ($variant->sku ?? ''));
+                $name = trim((string) ($variant->name ?? ''));
+                if ($sku !== '' && $name !== '') {
+                    $variantLabel = $sku.' — '.$name;
+                } elseif ($sku !== '' || $name !== '') {
+                    $variantLabel = $sku !== '' ? $sku : $name;
+                }
+            }
+
             return [
                 'id' => (string) $m->id,
                 'created_at' => $m->created_at?->format('Y-m-d H:i') ?? '',
@@ -325,28 +343,46 @@ final class ReportTableBuilder
                 'source_type' => (string) $m->source_type,
                 'reference' => $m->reference ?? '',
                 'product' => $m->product?->name ?? '—',
+                'variant' => $variantLabel,
+                'cuts' => (string) ($presented['cuts_summary'] ?? '—'),
                 'branch' => $m->branch?->name ?? '—',
                 'warehouse' => $m->warehouse?->name ?? '—',
-                'quantity' => $this->formatReportQty($m->quantity),
-                'before_qty' => $this->formatReportQty($m->before_qty),
-                'after_qty' => $this->formatReportQty($m->after_qty),
+                'quantity' => (string) ($presented['quantity_label'] ?? $this->formatReportQty($m->quantity)),
+                'before_qty' => (string) ($presented['before_qty_label'] ?? $this->formatReportQty($m->before_qty)),
+                'after_qty' => (string) ($presented['after_qty_label'] ?? $this->formatReportQty($m->after_qty)),
                 'user' => $m->createdBy ? $m->createdBy->displayName() : '—',
             ];
         };
 
-        return $this->mapPaginator(
-            'Inventory movements report',
-            $columns,
-            $q,
-            $paginate,
-            $n,
-            $mapRow,
-            [
-                'branches' => Branch::query()->where('status', 'active')->orderBy('name')->get(['id', 'name']),
-                'warehouses' => Warehouse::query()->where('status', 'active')->orderBy('name')->get(['id', 'name', 'branch_id']),
-                'products' => $this->reportFilterProducts(),
-            ]
-        );
+        $filterOptions = [
+            'branches' => Branch::query()->where('status', 'active')->orderBy('name')->get(['id', 'name']),
+            'warehouses' => Warehouse::query()->where('status', 'active')->orderBy('name')->get(['id', 'name', 'branch_id']),
+            'products' => $this->reportFilterProducts(),
+        ];
+
+        if ($paginate) {
+            $paginator = $q->paginate($n);
+            $billingMap = InventoryMovementPresenter::stockBillingModeMap($paginator->getCollection());
+            $paginator->through(fn (InventoryMovement $m): array => $mapRow($m, $billingMap));
+
+            return [
+                'title' => 'Inventory movements report',
+                'columns' => $columns,
+                'paginator' => $paginator,
+                'filterOptions' => $filterOptions,
+            ];
+        }
+
+        $items = $q->limit($n)->get();
+        $billingMap = InventoryMovementPresenter::stockBillingModeMap($items);
+        $rows = $items->map(fn (InventoryMovement $m): array => $mapRow($m, $billingMap))->values()->all();
+
+        return [
+            'title' => 'Inventory movements report',
+            'columns' => $columns,
+            'rows' => $rows,
+            'filterOptions' => $filterOptions,
+        ];
     }
 
     private function stockTransfers(Request $request, bool $paginate, int $n): array
@@ -425,6 +461,75 @@ final class ReportTableBuilder
         return $parts !== [] ? implode(' + ', $parts) : '—';
     }
 
+    /**
+     * @param  array<int, mixed>|null  $pairs
+     */
+    private function stockAreaWxHxQSummary(?array $pairs): string
+    {
+        if (! is_array($pairs) || $pairs === []) {
+            return '—';
+        }
+        $parts = [];
+        foreach ($pairs as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $w = (float) ($row['width'] ?? 0);
+            $h = (float) ($row['height'] ?? 0);
+            $q = (float) ($row['qty'] ?? 0);
+            if ($w <= 0 && $h <= 0 && $q <= 0) {
+                continue;
+            }
+            $parts[] = $this->formatReportQty($w).'×'.$this->formatReportQty($h).'×'.$this->formatReportQty($q);
+        }
+
+        return $parts !== [] ? implode(' + ', $parts) : '—';
+    }
+
+    /**
+     * @param  array<int, mixed>|null  $pairs
+     */
+    private function stockCutsSummaryForBilling(string $billing, ?array $pairs, float $quantity): string
+    {
+        $rawPairs = is_array($pairs) ? $pairs : [];
+
+        if ($billing === 'area_sqft') {
+            $summary = $this->stockAreaWxHxQSummary($rawPairs);
+            if ($summary === '—' && $quantity > 0) {
+                return $this->formatReportQty($quantity).' sq ft';
+            }
+
+            return $summary;
+        }
+
+        if ($billing === 'length_ft') {
+            $summary = $this->stockLengthsLxQSummary($rawPairs);
+            if ($summary === '—' && $quantity > 0) {
+                return $this->formatReportQty($quantity).'×1';
+            }
+
+            return $summary;
+        }
+
+        return '—';
+    }
+
+    /**
+     * @return string Quantity label with unit suffix for dimension billing rows.
+     */
+    private function stockOnHandQtyLabel(string $billing, float $quantity): string
+    {
+        $formatted = $this->formatReportQty($quantity);
+        if ($billing === 'area_sqft') {
+            return $formatted.' sq ft';
+        }
+        if ($billing === 'length_ft') {
+            return $formatted.' ft';
+        }
+
+        return $formatted;
+    }
+
     private function stocks(Request $request, bool $paginate, int $n): array
     {
         $globalLow = Setting::lowStockThreshold();
@@ -435,8 +540,8 @@ final class ReportTableBuilder
             ['key' => 'variant', 'label' => 'Variant'],
             ['key' => 'warehouse', 'label' => 'Warehouse'],
             ['key' => 'branch', 'label' => 'Branch'],
-            ['key' => 'lengths_lxq', 'label' => 'Lengths (L×Q)'],
-            ['key' => 'actual_ft', 'label' => 'Actual ft (on hand)'],
+            ['key' => 'lengths_lxq', 'label' => 'Cuts / sizes'],
+            ['key' => 'actual_ft', 'label' => 'On hand (ft / sq ft)'],
             ['key' => 'qty_units', 'label' => 'Qty (units)'],
             ['key' => 'reserved', 'label' => 'Reserved'],
             ['key' => 'available', 'label' => 'Available'],
@@ -472,24 +577,13 @@ final class ReportTableBuilder
 
             $billing = (string) ($s->billing_mode ?? 'quantity');
             $rawPairs = is_array($s->length_pairs) ? $s->length_pairs : [];
+            $qty = (float) $s->quantity;
 
-            $lengthsLxq = '—';
-            $actualFt = '—';
-            $qtyUnits = '—';
-
-            if ($billing === 'length_ft') {
-                $lengthsLxq = $this->stockLengthsLxQSummary($rawPairs);
-                if ($lengthsLxq === '—') {
-                    $qtyFt = (float) $s->quantity;
-                    if ($qtyFt > 0) {
-                        $lengthsLxq = $this->formatReportQty($qtyFt).'×1';
-                    }
-                }
-                $actualFt = $this->formatReportQty($s->quantity);
-                $qtyUnits = '—';
-            } else {
-                $qtyUnits = $this->formatReportQty($s->quantity);
-            }
+            $lengthsLxq = $this->stockCutsSummaryForBilling($billing, $rawPairs, $qty);
+            $actualFt = in_array($billing, ['length_ft', 'area_sqft'], true)
+                ? $this->stockOnHandQtyLabel($billing, $qty)
+                : '—';
+            $qtyUnits = $billing === 'quantity' ? $this->formatReportQty($qty) : '—';
 
             $variant = $s->productVarient;
             $variantLabel = $variant
@@ -747,11 +841,14 @@ final class ReportTableBuilder
             ['key' => 'total', 'label' => 'Total'],
         ];
 
+        $selectedIds = $this->normalizeExportIds($request);
+
         $q = PurchaseOrder::query()
             ->with(['supplier:id,name', 'branch:id,name', 'warehouse:id,name'])
             ->withCount('items')
             ->withSum('items', 'quantity')
             ->withSum('items', 'received_quantity')
+            ->when($selectedIds !== [], fn (Builder $b) => $b->whereIn('id', $selectedIds))
             ->when($request->query('date_from'), fn (Builder $b, $v) => $b->whereDate('order_date', '>=', $v))
             ->when($request->query('date_to'), fn (Builder $b, $v) => $b->whereDate('order_date', '<=', $v))
             ->when($request->query('branch_id'), fn (Builder $b, $v) => $b->where('branch_id', (int) $v))
@@ -880,8 +977,8 @@ final class ReportTableBuilder
             ['key' => 'product', 'label' => 'Product'],
             ['key' => 'variant', 'label' => 'Variant'],
             ['key' => 'billing_mode', 'label' => 'Billing mode'],
-            ['key' => 'lengths_lxq', 'label' => 'Lengths (L×Q)'],
-            ['key' => 'quantity', 'label' => 'Qty'],
+            ['key' => 'lengths_lxq', 'label' => 'Cuts / sizes'],
+            ['key' => 'quantity', 'label' => 'Qty (ft / sq ft / units)'],
             ['key' => 'unit_price', 'label' => 'Unit price'],
             ['key' => 'subtotal', 'label' => 'Line subtotal'],
             ['key' => 'tax_amount', 'label' => 'Tax'],
@@ -912,7 +1009,7 @@ final class ReportTableBuilder
             ->with([
                 'quotation' => fn ($rel) => $rel->with(['branch:id,name', 'warehouse:id,name', 'customer:id,name']),
                 'product:id,name',
-                'productVarient:id,name',
+                'productVarient:id,product_id,sku,name',
             ])
             ->when($selectedIds !== [], fn (Builder $b) => $b->whereIn('id', $selectedIds))
             ->when($needle === null, fn (Builder $b) => $b->whereHas('quotation', $applyQuotationFilters))
@@ -935,15 +1032,22 @@ final class ReportTableBuilder
             $qt = $line->quotation;
             $billing = (string) ($line->billing_mode ?? 'quantity');
             $rawPairs = is_array($line->length_pairs) ? $line->length_pairs : [];
+            $qty = (float) ($line->quantity ?? 0);
 
-            $lengthsLxq = '—';
-            if ($billing === 'length_ft') {
-                $lengthsLxq = $this->stockLengthsLxQSummary($rawPairs);
-                if ($lengthsLxq === '—') {
-                    $qtyFt = (float) ($line->quantity ?? 0);
-                    if ($qtyFt > 0) {
-                        $lengthsLxq = $this->formatReportQty($qtyFt).'×1';
-                    }
+            $lengthsLxq = $this->stockCutsSummaryForBilling($billing, $rawPairs, $qty);
+            $quantityLabel = in_array($billing, ['length_ft', 'area_sqft'], true)
+                ? $this->stockOnHandQtyLabel($billing, $qty)
+                : $this->formatReportQty($qty);
+
+            $variant = $line->productVarient;
+            $variantLabel = '—';
+            if ($variant) {
+                $sku = trim((string) ($variant->sku ?? ''));
+                $name = trim((string) ($variant->name ?? ''));
+                if ($sku !== '' && $name !== '') {
+                    $variantLabel = $sku.' — '.$name;
+                } elseif ($sku !== '' || $name !== '') {
+                    $variantLabel = $sku !== '' ? $sku : $name;
                 }
             }
 
@@ -958,10 +1062,10 @@ final class ReportTableBuilder
                 'customer' => $qt?->customer?->name ?? '—',
                 'quotation_status' => $qt ? (string) $qt->status : '',
                 'product' => $line->product?->name ?? '—',
-                'variant' => $line->productVarient?->name ?? '',
+                'variant' => $variantLabel,
                 'billing_mode' => $billing,
                 'lengths_lxq' => $lengthsLxq,
-                'quantity' => $this->formatReportQty($line->quantity ?? 0),
+                'quantity' => $quantityLabel,
                 'unit_price' => (string) $line->unit_price,
                 'subtotal' => (string) $line->subtotal,
                 'tax_amount' => (string) $line->tax_amount,
@@ -1402,8 +1506,8 @@ final class ReportTableBuilder
             ['key' => 'variant', 'label' => 'Variant'],
             ['key' => 'warehouse', 'label' => 'Warehouse'],
             ['key' => 'branch', 'label' => 'Branch'],
-            ['key' => 'lengths_lxq', 'label' => 'Lengths (L×Q)'],
-            ['key' => 'qty_on_hand', 'label' => 'Qty'],
+            ['key' => 'lengths_lxq', 'label' => 'Cuts / sizes'],
+            ['key' => 'qty_on_hand', 'label' => 'On hand (ft / sq ft / units)'],
             ['key' => 'unit_cost', 'label' => 'Unit cost'],
             ['key' => 'cost_source', 'label' => 'Cost basis'],
             ['key' => 'stock_value', 'label' => 'Value'],
@@ -1454,24 +1558,10 @@ final class ReportTableBuilder
 
             $billing = (string) ($s->billing_mode ?? 'quantity');
             $rawPairs = is_array($s->length_pairs) ? $s->length_pairs : [];
-
-            $lengthsLxq = '—';
-            $qtyOnHand = '—';
-
-            if ($billing === 'length_ft') {
-                $lengthsLxq = $this->stockLengthsLxQSummary($rawPairs);
-                if ($lengthsLxq === '—') {
-                    $qtyFt = (float) $s->quantity;
-                    if ($qtyFt > 0) {
-                        $lengthsLxq = $this->formatReportQty($qtyFt).'×1';
-                    }
-                }
-                $qtyOnHand = $this->formatReportQty($s->quantity);
-            } else {
-                $qtyOnHand = $this->formatReportQty($s->quantity);
-            }
-
             $qty = (float) $s->quantity;
+
+            $lengthsLxq = $this->stockCutsSummaryForBilling($billing, $rawPairs, $qty);
+            $qtyOnHand = $this->stockOnHandQtyLabel($billing, $qty);
             $stockValue = round($qty * $unitCost, 2);
 
             return [

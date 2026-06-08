@@ -10,6 +10,7 @@ use App\Models\SaleReturn;
 use App\Models\Stock;
 use App\Support\StockLocator;
 use App\Models\StockAdjustment;
+use App\Support\GlassAreaBillingPairs;
 use App\Support\LengthBillingPairs;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -65,6 +66,8 @@ class InventoryService
                         sourceId: (int) $invoice->id,
                         reference: (string) ($invoice->invoice_number ?? null),
                         notes: 'Purchase received',
+                        billingMode: (string) ($item->billing_mode ?? 'quantity'),
+                        lengthPairs: is_array($item->length_pairs) ? $item->length_pairs : null,
                     );
                 }
             }
@@ -95,6 +98,8 @@ class InventoryService
                         sourceId: (int) $sale->id,
                         reference: (string) ($sale->sale_number ?? null),
                         notes: 'Sale completed',
+                        billingMode: (string) ($item->billing_mode ?? 'quantity'),
+                        lengthPairs: is_array($item->length_pairs) ? $item->length_pairs : null,
                     );
                 }
             }
@@ -125,6 +130,8 @@ class InventoryService
                         sourceId: (int) $sale->id,
                         reference: (string) ($sale->sale_number ?? null),
                         notes: 'Sale returned',
+                        billingMode: (string) ($item->billing_mode ?? 'quantity'),
+                        lengthPairs: is_array($item->length_pairs) ? $item->length_pairs : null,
                     );
                 }
             }
@@ -143,7 +150,9 @@ class InventoryService
                 throw new RuntimeException('Sale return has no parent sale.');
             }
 
+            $saleReturn->loadMissing('items.saleItem');
             foreach ($saleReturn->items as $row) {
+                $saleItem = $row->saleItem;
                 $this->incrementStock(
                     warehouseId: (int) $saleReturn->warehouse_id,
                     branchId: (int) $sale->branch_id,
@@ -154,6 +163,8 @@ class InventoryService
                     sourceId: (int) $saleReturn->id,
                     reference: (string) ($saleReturn->return_number ?? null),
                     notes: 'Sale return document',
+                    billingMode: (string) ($saleItem?->billing_mode ?? 'quantity'),
+                    lengthPairs: is_array($saleItem?->length_pairs) ? $saleItem->length_pairs : null,
                 );
             }
         });
@@ -207,6 +218,8 @@ class InventoryService
                     : null;
                 $qty = (float) $it['quantity'];
                 $received = isset($it['received_quantity']) ? (float) $it['received_quantity'] : $qty;
+                $billingMode = (string) ($it['billing_mode'] ?? 'quantity');
+                $pairs = is_array($it['length_pairs'] ?? null) ? $it['length_pairs'] : [];
 
                 $this->decrementStock(
                     warehouseId: $fromWarehouseId,
@@ -218,6 +231,8 @@ class InventoryService
                     sourceId: $this->ctx['source_id'] ?? null,
                     reference: $this->ctx['reference'] ?? null,
                     notes: $this->ctx['notes'] ?? 'Transfer out',
+                    billingMode: $billingMode,
+                    lengthPairs: $pairs !== [] ? $pairs : null,
                 );
 
                 $this->incrementStock(
@@ -230,9 +245,158 @@ class InventoryService
                     sourceId: $this->ctx['source_id'] ?? null,
                     reference: $this->ctx['reference'] ?? null,
                     notes: $this->ctx['notes'] ?? 'Transfer in',
+                    billingMode: $billingMode,
+                    lengthPairs: $pairs !== [] ? $pairs : null,
                 );
+
+                if (in_array($billingMode, ['length_ft', 'area_sqft'], true) && $pairs !== []) {
+                    $this->applyTransferPairsOnStockRows(
+                        fromWarehouseId: $fromWarehouseId,
+                        toWarehouseId: $toWarehouseId,
+                        productId: $productId,
+                        variantId: $variantId,
+                        billingMode: $billingMode,
+                        pairs: $pairs,
+                    );
+                }
             }
         });
+    }
+
+    /**
+     * @param  array<int, array<string, float>>  $pairs
+     */
+    private function applyTransferPairsOnStockRows(
+        int $fromWarehouseId,
+        int $toWarehouseId,
+        int $productId,
+        ?int $variantId,
+        string $billingMode,
+        array $pairs,
+    ): void {
+        $fromStock = StockLocator::findLocked($fromWarehouseId, $productId, $variantId);
+        if ($fromStock !== null) {
+            $remaining = $this->subtractPairsFromStock($fromStock, $billingMode, $pairs);
+            $fromStock->length_pairs = $remaining;
+            $fromStock->save();
+            if ($billingMode === 'length_ft') {
+                $this->lengthCutStockService->syncLengthItemsFromStockLengthPairs($fromStock);
+            }
+        }
+
+        $toStock = StockLocator::findLocked($toWarehouseId, $productId, $variantId);
+
+        if ($toStock !== null) {
+            $merged = $this->mergePairsIntoStock($toStock, $billingMode, $pairs);
+            $toStock->billing_mode = $billingMode;
+            $toStock->length_pairs = $merged;
+            $toStock->save();
+            if ($billingMode === 'length_ft') {
+                $this->lengthCutStockService->syncLengthItemsFromStockLengthPairs($toStock);
+            }
+        }
+    }
+
+    /**
+     * @param  array<int, array<string, float>>  $pairs
+     * @return array<int, array<string, float>>
+     */
+    private function mergePairsIntoStock(Stock $stock, string $billingMode, array $pairs): array
+    {
+        if ($billingMode === 'area_sqft') {
+            $existing = GlassAreaBillingPairs::normalizeAreaPairsForStorage(
+                is_array($stock->length_pairs) ? $stock->length_pairs : []
+            );
+            $incoming = GlassAreaBillingPairs::normalizeAreaPairsForStorage($pairs);
+            $map = [];
+            foreach ($existing as $row) {
+                $key = $row['width'].'|'.$row['height'];
+                $map[$key] = $row;
+            }
+            foreach ($incoming as $row) {
+                $key = $row['width'].'|'.$row['height'];
+                if (! isset($map[$key])) {
+                    $map[$key] = $row;
+                } else {
+                    $map[$key]['qty'] = round($map[$key]['qty'] + $row['qty'], 6);
+                }
+            }
+
+            return array_values(array_filter($map, static fn (array $r): bool => $r['qty'] > 0));
+        }
+
+        $existing = LengthBillingPairs::normalizeLengthPairsForStorage(
+            is_array($stock->length_pairs) ? $stock->length_pairs : []
+        );
+        $incoming = LengthBillingPairs::normalizeLengthPairsForStorage($pairs);
+        $map = [];
+        foreach ($existing as $row) {
+            $key = (string) $row['length'];
+            $map[$key] = $row;
+        }
+        foreach ($incoming as $row) {
+            $key = (string) $row['length'];
+            if (! isset($map[$key])) {
+                $map[$key] = $row;
+            } else {
+                $map[$key]['qty'] = round($map[$key]['qty'] + $row['qty'], 6);
+            }
+        }
+
+        return array_values(array_filter($map, static fn (array $r): bool => $r['qty'] > 0));
+    }
+
+    /**
+     * @param  array<int, array<string, float>>  $pairs
+     * @return array<int, array<string, float>>
+     */
+    private function subtractPairsFromStock(Stock $stock, string $billingMode, array $pairs): array
+    {
+        if ($billingMode === 'area_sqft') {
+            $existing = GlassAreaBillingPairs::normalizeAreaPairsForStorage(
+                is_array($stock->length_pairs) ? $stock->length_pairs : []
+            );
+            $remove = GlassAreaBillingPairs::normalizeAreaPairsForStorage($pairs);
+            $map = [];
+            foreach ($existing as $row) {
+                $key = $row['width'].'|'.$row['height'];
+                $map[$key] = $row;
+            }
+            foreach ($remove as $row) {
+                $key = $row['width'].'|'.$row['height'];
+                if (! isset($map[$key])) {
+                    continue;
+                }
+                $map[$key]['qty'] = round(max(0, $map[$key]['qty'] - $row['qty']), 6);
+                if ($map[$key]['qty'] <= 0) {
+                    unset($map[$key]);
+                }
+            }
+
+            return array_values($map);
+        }
+
+        $existing = LengthBillingPairs::normalizeLengthPairsForStorage(
+            is_array($stock->length_pairs) ? $stock->length_pairs : []
+        );
+        $remove = LengthBillingPairs::normalizeLengthPairsForStorage($pairs);
+        $map = [];
+        foreach ($existing as $row) {
+            $key = (string) $row['length'];
+            $map[$key] = $row;
+        }
+        foreach ($remove as $row) {
+            $key = (string) $row['length'];
+            if (! isset($map[$key])) {
+                continue;
+            }
+            $map[$key]['qty'] = round(max(0, $map[$key]['qty'] - $row['qty']), 6);
+            if ($map[$key]['qty'] <= 0) {
+                unset($map[$key]);
+            }
+        }
+
+        return array_values($map);
     }
 
     private function incrementStock(
@@ -245,6 +409,8 @@ class InventoryService
         ?int $sourceId = null,
         ?string $reference = null,
         ?string $notes = null,
+        ?string $billingMode = null,
+        ?array $lengthPairs = null,
     ): void {
         if ($qty <= 0) {
             return;
@@ -287,6 +453,8 @@ class InventoryService
             sourceId: $sourceId ?? ($this->ctx['source_id'] ?? null),
             reference: $reference ?? ($this->ctx['reference'] ?? null),
             notes: $notes ?? ($this->ctx['notes'] ?? null),
+            billingMode: $billingMode ?? (string) ($stock->billing_mode ?? 'quantity'),
+            lengthPairs: $lengthPairs,
         );
 
         /** @var BranchProduct|null $bp */
@@ -321,6 +489,8 @@ class InventoryService
         ?int $sourceId = null,
         ?string $reference = null,
         ?string $notes = null,
+        ?string $billingMode = null,
+        ?array $lengthPairs = null,
     ): void {
         if ($qty <= 0) {
             return;
@@ -353,6 +523,8 @@ class InventoryService
             sourceId: $sourceId ?? ($this->ctx['source_id'] ?? null),
             reference: $reference ?? ($this->ctx['reference'] ?? null),
             notes: $notes ?? ($this->ctx['notes'] ?? null),
+            billingMode: $billingMode ?? (string) ($stock->billing_mode ?? 'quantity'),
+            lengthPairs: $lengthPairs,
         );
 
         /** @var BranchProduct|null $bp */
@@ -382,6 +554,8 @@ class InventoryService
         ?int $sourceId,
         ?string $reference,
         ?string $notes,
+        ?string $billingMode = null,
+        ?array $lengthPairs = null,
     ): void {
         InventoryMovement::create([
             'branch_id' => $branchId,
@@ -390,6 +564,8 @@ class InventoryService
             'product_variant_id' => $variantId,
             'direction' => $direction,
             'quantity' => $qty,
+            'billing_mode' => $billingMode,
+            'length_pairs' => $lengthPairs,
             'before_qty' => $beforeQty,
             'after_qty' => $afterQty,
             'source_type' => $sourceType,

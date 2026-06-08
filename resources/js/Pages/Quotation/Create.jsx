@@ -4,11 +4,21 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Modal from '@/Components/Modal';
 import StockAvailabilityModal from '@/Components/StockAvailabilityModal';
 import { useStockAvailability } from '@/hooks/useStockAvailability';
+import GlassAreaBillingPanel from '@/Components/GlassAreaBillingPanel';
+import { transformSaleQuotationItemForSubmit } from '@/lib/billingItemSubmit';
 import {
-    computeLengthLineAmounts,
+    addBillingPairRow,
+    applyVariantPrice,
+    DEFAULT_BILLING_ROW_COUNT,
+    emptyAreaPairs,
     emptyLengthPairs,
-    lineNetBeforeTax,
-} from '@/lib/saleLengthBilling';
+    removeBillingPairRow,
+    setBillingMode,
+    syncBillingTotals,
+    updateBillingPair,
+} from '@/lib/billingLineItemState';
+import { computeAreaLineAmounts } from '@/lib/glassAreaBilling';
+import { computeLengthLineAmounts, lineNetBeforeTax } from '@/lib/saleLengthBilling';
 import { formatVariantAttributes, variantFullLabel } from '@/lib/variantLabel';
 
 const inputClass =
@@ -18,8 +28,6 @@ const inputClassInline =
     'block w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20';
 
 const labelClass = 'block text-sm font-semibold text-gray-700';
-
-const DEFAULT_LENGTH_ROW_COUNT = 4;
 
 /** Simple products: same default price as first active variant (product list order). Variable products keep 0 until a variant is chosen. */
 function defaultUnitPriceForProduct(product) {
@@ -40,6 +48,7 @@ function buildItem(productId, product) {
         billing_mode: 'quantity',
         length_pairs: emptyLengthPairs(),
         rate_per_ft: '',
+        rate_per_sqft: '',
         discount_percent: '0',
         quantity: 1,
         unit_price: unitPrice,
@@ -166,9 +175,13 @@ export default function Create({ branches, warehouses, customers = [], products,
     const qtyTableColumnHeader = useMemo(() => {
         const items = data.items ?? [];
         if (items.length === 0) return 'Qty';
-        return items.every((it) => (it.billing_mode ?? 'quantity') === 'length_ft')
-            ? 'Length Qty'
-            : 'Qty';
+        if (items.every((it) => (it.billing_mode ?? 'quantity') === 'length_ft')) {
+            return 'Length Qty';
+        }
+        if (items.every((it) => (it.billing_mode ?? 'quantity') === 'area_sqft')) {
+            return 'Sq Ft';
+        }
+        return 'Qty';
     }, [data.items]);
 
     const addItem = async () => {
@@ -193,22 +206,6 @@ export default function Create({ branches, warehouses, customers = [], products,
         );
     };
 
-    const syncLengthTotals = (draft) => {
-        if ((draft.billing_mode ?? 'quantity') !== 'length_ft') {
-            return draft;
-        }
-        const next = { ...draft };
-        const r = computeLengthLineAmounts(next);
-        next.quantity = r.totalFt > 0 ? String(r.totalFt) : '';
-        const rp =
-            next.rate_per_ft !== '' && next.rate_per_ft != null
-                ? Number(next.rate_per_ft)
-                : Number(next.unit_price || 0);
-        next.rate_per_ft = rp > 0 ? String(rp) : next.rate_per_ft;
-        next.unit_price = String(Number.isFinite(rp) ? rp : 0);
-        return next;
-    };
-
     const updateItem = (idx, key, value) => {
         setData(
             'items',
@@ -222,41 +219,28 @@ export default function Create({ branches, warehouses, customers = [], products,
                     const v = prod?.variants?.find(
                         (x) => String(x.id) === String(value),
                     );
-                    const mode = it.billing_mode ?? 'quantity';
-                    if (v != null && Number.isFinite(Number(v.selling_price))) {
-                        const sp = v.selling_price;
-                        if (mode === 'length_ft') {
-                            next.rate_per_ft = String(sp);
-                            next.unit_price = String(sp);
-                        } else {
-                            next.unit_price = sp;
-                        }
+                    if (v != null) {
+                        next = applyVariantPrice(next, v.selling_price);
                     }
                 }
-                if ((next.billing_mode ?? 'quantity') === 'length_ft') {
-                    next = syncLengthTotals(next);
+                if (['length_ft', 'area_sqft'].includes(next.billing_mode ?? 'quantity')) {
+                    next = syncBillingTotals(next);
                 }
                 return next;
             }),
         );
     };
 
-    const updateLengthPair = (idx, pairIdx, field, raw) => {
+    const updateBillingPairRow = (idx, pairIdx, field, raw) => {
         setData(
             'items',
-            data.items.map((it, i) => {
-                if (i !== idx) {
-                    return it;
-                }
-                const pairs = [...(it.length_pairs || emptyLengthPairs())].map((row, j) =>
-                    j === pairIdx ? { ...row, [field]: raw } : row,
-                );
-                return syncLengthTotals({ ...it, length_pairs: pairs });
-            }),
+            data.items.map((it, i) =>
+                i === idx ? updateBillingPair(it, pairIdx, field, raw) : it,
+            ),
         );
     };
 
-    const toggleLengthBilling = (idx, checked) => {
+    const toggleBillingMode = (idx, targetMode, checked) => {
         setData(
             'items',
             data.items.map((it, i) => {
@@ -264,89 +248,43 @@ export default function Create({ branches, warehouses, customers = [], products,
                     return it;
                 }
                 if (!checked) {
-                    return {
-                        ...it,
-                        billing_mode: 'quantity',
-                        length_pairs: emptyLengthPairs(),
-                        rate_per_ft: '',
-                        discount_percent: '0',
-                        quantity:
-                            it.quantity !== '' &&
-                            Number(it.quantity) > 0
-                                ? String(it.quantity)
-                                : '1',
-                        unit_price: it.unit_price,
-                    };
+                    return setBillingMode(it, 'quantity');
                 }
-                const rate =
-                    Number(it.rate_per_ft) > 0
-                        ? it.rate_per_ft
-                        : Number(it.unit_price) > 0
-                          ? String(it.unit_price)
-                          : '';
-                const draft = {
-                    ...it,
-                    billing_mode: 'length_ft',
-                    length_pairs:
-                        Array.isArray(it.length_pairs) && it.length_pairs.length > 0
-                            ? it.length_pairs
-                            : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT),
-                    rate_per_ft: rate,
-                    discount_percent: String(it.discount_percent ?? '0'),
-                };
-                return syncLengthTotals(draft);
+                return setBillingMode(it, targetMode);
             }),
         );
     };
 
-    const refreshLengthPairs = (idx) => {
+    const refreshBillingPairs = (idx) => {
+        setData(
+            'items',
+            data.items.map((it, i) => {
+                if (i !== idx) {
+                    return it;
+                }
+                const mode = it.billing_mode ?? 'quantity';
+                const empty =
+                    mode === 'area_sqft'
+                        ? emptyAreaPairs(DEFAULT_BILLING_ROW_COUNT)
+                        : emptyLengthPairs(DEFAULT_BILLING_ROW_COUNT);
+                return syncBillingTotals({ ...it, length_pairs: empty });
+            }),
+        );
+    };
+
+    const addBillingPairRowToItem = (idx) => {
+        setData(
+            'items',
+            data.items.map((it, i) => (i === idx ? addBillingPairRow(it) : it)),
+        );
+    };
+
+    const removeBillingPairRowFromItem = (idx, pairIdx) => {
         setData(
             'items',
             data.items.map((it, i) =>
-                i === idx
-                    ? syncLengthTotals({
-                          ...it,
-                          length_pairs: emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT),
-                      })
-                    : it,
+                i === idx ? removeBillingPairRow(it, pairIdx) : it,
             ),
-        );
-    };
-
-    const addLengthPairRow = (idx) => {
-        setData(
-            'items',
-            data.items.map((it, i) => {
-                if (i !== idx) {
-                    return it;
-                }
-                const p = Array.isArray(it.length_pairs)
-                    ? it.length_pairs
-                    : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
-                return syncLengthTotals({
-                    ...it,
-                    length_pairs: [...p, { length: '', qty: '' }],
-                });
-            }),
-        );
-    };
-
-    const removeLengthPairRow = (idx, pairIdx) => {
-        setData(
-            'items',
-            data.items.map((it, i) => {
-                if (i !== idx) {
-                    return it;
-                }
-                const p = Array.isArray(it.length_pairs)
-                    ? it.length_pairs
-                    : emptyLengthPairs(DEFAULT_LENGTH_ROW_COUNT);
-                if (p.length <= 1) {
-                    return it;
-                }
-                const nextPairs = p.filter((_, j) => j !== pairIdx);
-                return syncLengthTotals({ ...it, length_pairs: nextPairs });
-            }),
         );
     };
 
@@ -387,50 +325,9 @@ export default function Create({ branches, warehouses, customers = [], products,
             shipping_amount: Number(form.shipping_amount || 0),
             discount_amount: Number(form.discount_amount || 0),
             notes: form.notes || null,
-            items: (form.items ?? []).map((it) => {
-                const vid =
-                    it.product_variant_id === '' || it.product_variant_id == null
-                        ? null
-                        : Number(it.product_variant_id);
-                if ((it.billing_mode ?? 'quantity') !== 'length_ft') {
-                    return {
-                        product_id: it.product_id,
-                        product_variant_id: vid,
-                        billing_mode: 'quantity',
-                        length_pairs: null,
-                        quantity: Number(it.quantity || 0),
-                        unit_price: Number(it.unit_price || 0),
-                    };
-                }
-                const normalizedPairs =
-                    Array.isArray(it.length_pairs)
-                        ? it.length_pairs.map((row) => ({
-                              length:
-                                  row?.length === '' || row?.length == null
-                                      ? 0
-                                      : Number(row.length),
-                              qty:
-                                  row?.qty === '' || row?.qty == null
-                                      ? 0
-                                      : Number(row.qty),
-                          }))
-                        : [];
-                const r = computeLengthLineAmounts({
-                    ...it,
-                    length_pairs: normalizedPairs,
-                });
-                const rate = Number(it.rate_per_ft ?? it.unit_price ?? 0);
-                return {
-                    product_id: it.product_id,
-                    product_variant_id: vid,
-                    billing_mode: 'length_ft',
-                    length_pairs: normalizedPairs,
-                    rate_per_ft: rate,
-                    discount_percent: Number(it.discount_percent ?? 0),
-                    quantity: r.totalFt,
-                    unit_price: rate,
-                };
-            }),
+            items: (form.items ?? []).map((it) =>
+                transformSaleQuotationItemForSubmit(it),
+            ),
         }));
         post(route('quotations.store'));
     };
@@ -912,12 +809,20 @@ export default function Create({ branches, warehouses, customers = [], products,
                                                 );
                                                 const isVariable = rowProduct?.type === 'variable';
                                                 const variants = rowProduct?.variants ?? [];
-                                                const isLength =
-                                                    (it.billing_mode ?? 'quantity') === 'length_ft';
+                                                const billingMode =
+                                                    it.billing_mode ?? 'quantity';
+                                                const isLength = billingMode === 'length_ft';
+                                                const isArea = billingMode === 'area_sqft';
                                                 const pairs = Array.isArray(it.length_pairs)
                                                     ? it.length_pairs
-                                                    : emptyLengthPairs();
+                                                    : isArea
+                                                      ? emptyAreaPairs()
+                                                      : emptyLengthPairs();
                                                 const lenAmt = computeLengthLineAmounts({
+                                                    ...it,
+                                                    length_pairs: pairs,
+                                                });
+                                                const areaAmt = computeAreaLineAmounts({
                                                     ...it,
                                                     length_pairs: pairs,
                                                 });
@@ -933,17 +838,34 @@ export default function Create({ branches, warehouses, customers = [], products,
                                                                         type="checkbox"
                                                                         checked={isLength}
                                                                         onChange={(e) =>
-                                                                            toggleLengthBilling(
+                                                                            toggleBillingMode(
                                                                                 idx,
+                                                                                'length_ft',
                                                                                 e.target.checked,
                                                                             )
                                                                         }
                                                                         className="rounded border-gray-300 text-brand focus:ring-brand"
                                                                     />
                                                                     <span className="text-xs text-gray-600">
-                                                                        Length (ft) billing — multiple
-                                                                        length × qty rows, rate / ft,
-                                                                        discount %
+                                                                        Length (ft) billing
+                                                                    </span>
+                                                                </label>
+                                                                <label className="mt-1 flex cursor-pointer items-center gap-2">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={isArea}
+                                                                        onChange={(e) =>
+                                                                            toggleBillingMode(
+                                                                                idx,
+                                                                                'area_sqft',
+                                                                                e.target.checked,
+                                                                            )
+                                                                        }
+                                                                        className="rounded border-gray-300 text-brand focus:ring-brand"
+                                                                    />
+                                                                    <span className="text-xs text-gray-600">
+                                                                        Glass area (sq ft) — W × H ×
+                                                                        qty / 144, rate / sq ft
                                                                     </span>
                                                                 </label>
                                                             </td>
@@ -1003,6 +925,15 @@ export default function Create({ branches, warehouses, customers = [], products,
                                                                             {lenAmt.totalFt.toFixed(4)}
                                                                         </p>
                                                                     </div>
+                                                                ) : isArea ? (
+                                                                    <div>
+                                                                        <p className="text-xs text-gray-500">
+                                                                            Total sq ft
+                                                                        </p>
+                                                                        <p className="font-mono text-sm font-semibold text-gray-900">
+                                                                            {areaAmt.totalSqFt.toFixed(4)}
+                                                                        </p>
+                                                                    </div>
                                                                 ) : (
                                                                     <>
                                                                         <input
@@ -1053,6 +984,32 @@ export default function Create({ branches, warehouses, customers = [], products,
                                                                                 updateItem(
                                                                                     idx,
                                                                                     'rate_per_ft',
+                                                                                    e.target.value,
+                                                                                )
+                                                                            }
+                                                                            className="w-32 rounded-lg border border-gray-300 px-3 py-2 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                                                                        />
+                                                                    </div>
+                                                                ) : isArea ? (
+                                                                    <div>
+                                                                        <p className="text-xs text-gray-500">
+                                                                            Rate / sq ft
+                                                                        </p>
+                                                                        <input
+                                                                            type="number"
+                                                                            step="0.01"
+                                                                            min="0"
+                                                                            value={
+                                                                                it.rate_per_sqft !==
+                                                                                    '' &&
+                                                                                it.rate_per_sqft != null
+                                                                                    ? it.rate_per_sqft
+                                                                                    : it.unit_price ?? ''
+                                                                            }
+                                                                            onChange={(e) =>
+                                                                                updateItem(
+                                                                                    idx,
+                                                                                    'rate_per_sqft',
                                                                                     e.target.value,
                                                                                 )
                                                                             }
@@ -1140,7 +1097,7 @@ export default function Create({ branches, warehouses, customers = [], products,
                                                                                                 onChange={(
                                                                                                     e,
                                                                                                 ) =>
-                                                                                                    updateLengthPair(
+                                                                                                    updateBillingPairRow(
                                                                                                         idx,
                                                                                                         pairIdx,
                                                                                                         'length',
@@ -1165,7 +1122,7 @@ export default function Create({ branches, warehouses, customers = [], products,
                                                                                                 onChange={(
                                                                                                     e,
                                                                                                 ) =>
-                                                                                                    updateLengthPair(
+                                                                                                    updateBillingPairRow(
                                                                                                         idx,
                                                                                                         pairIdx,
                                                                                                         'qty',
@@ -1181,7 +1138,7 @@ export default function Create({ branches, warehouses, customers = [], products,
                                                                                                     title="Remove row"
                                                                                                     className="shrink-0 rounded border border-gray-200 bg-white px-1.5 py-1 text-xs text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
                                                                                                     onClick={() =>
-                                                                                                        removeLengthPairRow(
+                                                                                                        removeBillingPairRowFromItem(
                                                                                                             idx,
                                                                                                             pairIdx,
                                                                                                         )
@@ -1263,7 +1220,7 @@ export default function Create({ branches, warehouses, customers = [], products,
                                                                                 type="button"
                                                                                 className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/10"
                                                                                 onClick={() =>
-                                                                                    addLengthPairRow(idx)
+                                                                                    addBillingPairRowToItem(idx)
                                                                                 }
                                                                             >
                                                                                 + Add length row
@@ -1272,11 +1229,68 @@ export default function Create({ branches, warehouses, customers = [], products,
                                                                                 type="button"
                                                                                 className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700"
                                                                                 onClick={() =>
-                                                                                    refreshLengthPairs(idx)
+                                                                                    refreshBillingPairs(idx)
                                                                                 }
                                                                             >
                                                                                 Refresh
                                                                             </button>
+                                                                        </div>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        )}
+                                                        {isArea && (
+                                                            <tr className="bg-sky-50/50">
+                                                                <td colSpan={6} className="px-4 py-4">
+                                                                    <GlassAreaBillingPanel
+                                                                        pairs={pairs}
+                                                                        onUpdatePair={(pairIdx, field, raw) =>
+                                                                            updateBillingPairRow(
+                                                                                idx,
+                                                                                pairIdx,
+                                                                                field,
+                                                                                raw,
+                                                                            )
+                                                                        }
+                                                                        onAddRow={() =>
+                                                                            addBillingPairRowToItem(idx)
+                                                                        }
+                                                                        onRemoveRow={(pairIdx) =>
+                                                                            removeBillingPairRowFromItem(
+                                                                                idx,
+                                                                                pairIdx,
+                                                                            )
+                                                                        }
+                                                                        onRefresh={() =>
+                                                                            refreshBillingPairs(idx)
+                                                                        }
+                                                                        discountPercent={
+                                                                            it.discount_percent
+                                                                        }
+                                                                        onDiscountChange={(v) =>
+                                                                            updateItem(
+                                                                                idx,
+                                                                                'discount_percent',
+                                                                                v,
+                                                                            )
+                                                                        }
+                                                                    />
+                                                                    <div className="mt-4 flex flex-wrap gap-6 border-t border-gray-200 pt-3 text-sm">
+                                                                        <div>
+                                                                            <p className="text-xs font-medium text-gray-600">
+                                                                                Total sq ft
+                                                                            </p>
+                                                                            <p className="font-mono text-lg font-semibold text-gray-900">
+                                                                                {areaAmt.totalSqFt.toFixed(4)}
+                                                                            </p>
+                                                                        </div>
+                                                                        <div>
+                                                                            <p className="text-xs font-medium text-gray-600">
+                                                                                Line total
+                                                                            </p>
+                                                                            <p className="font-mono text-lg font-semibold text-brand">
+                                                                                {areaAmt.net.toFixed(2)}
+                                                                            </p>
                                                                         </div>
                                                                     </div>
                                                                 </td>

@@ -1,5 +1,6 @@
 import React from 'react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { formatAreaPairsSummary, formatLengthPairsSummary } from '@/lib/saleDetailTableRows';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 
 function formatQty(value) {
@@ -12,20 +13,12 @@ function formatQty(value) {
     });
 }
 
-function formatLengthPairsSummary(pairs) {
-    if (!Array.isArray(pairs)) return '—';
-    const parts = pairs
-        .map((r) => {
-            const l = Number(r?.length ?? 0);
-            const q = Number(r?.qty ?? 0);
-            if (l <= 0 && q <= 0) return null;
-            return `${l}×${q}`;
-        })
-        .filter(Boolean);
-    return parts.length ? parts.join(' + ') : '—';
-}
-
 export default function Show({ stock }) {
+    const billingMode = stock?.billing_mode ?? 'quantity';
+    const isLength = billingMode === 'length_ft';
+    const isArea = billingMode === 'area_sqft';
+    const isCut = isLength || isArea;
+    const sumUnit = isArea ? 'sq ft' : 'ft';
     const { flash } = usePage().props;
 
     const destroyRow = () => {
@@ -108,12 +101,14 @@ export default function Show({ stock }) {
                             <div>
                                 <dt className="text-sm font-semibold text-gray-700">Billing</dt>
                                 <dd className="mt-1 text-sm text-gray-900">
-                                    {(stock.billing_mode ?? 'quantity') === 'length_ft'
+                                    {isLength
                                         ? 'Length (ft) — Σ(length × qty)'
-                                        : 'Units (quantity)'}
+                                        : isArea
+                                          ? 'Glass area (sq ft) — Σ(W×H×qty)/144'
+                                          : 'Units (quantity)'}
                                 </dd>
                             </div>
-                            {(stock.billing_mode ?? 'quantity') === 'length_ft' && (
+                            {isLength && (
                                 <div className="sm:col-span-2">
                                     <dt className="text-sm font-semibold text-gray-700">Lengths (L×Q)</dt>
                                     <dd className="mt-1 text-sm text-gray-900">
@@ -126,7 +121,20 @@ export default function Show({ stock }) {
                                     )}
                                 </div>
                             )}
-                            {(stock.billing_mode ?? 'quantity') === 'length_ft' &&
+                            {isArea && (
+                                <div className="sm:col-span-2">
+                                    <dt className="text-sm font-semibold text-gray-700">Sizes (W×H×Q)</dt>
+                                    <dd className="mt-1 text-sm text-gray-900">
+                                        {formatAreaPairsSummary(stock.length_pairs)}
+                                    </dd>
+                                    {stock.length_pairs_sum_ft != null && (
+                                        <p className="mt-1 text-xs text-gray-500">
+                                            Σ from saved rows: {formatQty(stock.length_pairs_sum_ft)} sq ft
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+                            {isLength &&
                                 Array.isArray(stock.stock_length_items) &&
                                 stock.stock_length_items.length > 0 && (
                                     <div className="sm:col-span-2">
@@ -167,20 +175,22 @@ export default function Show({ stock }) {
                                 )}
                             <div>
                                 <dt className="text-sm font-semibold text-gray-700">
-                                    {(stock.billing_mode ?? 'quantity') === 'length_ft'
+                                    {isLength
                                         ? 'Actual ft on hand (inventory qty)'
-                                        : 'Quantity'}
+                                        : isArea
+                                          ? 'Actual sq ft on hand (inventory qty)'
+                                          : 'Quantity'}
                                 </dt>
                                 <dd className="mt-1 text-sm font-semibold text-gray-900">
                                     {formatQty(stock.quantity)}
                                 </dd>
-                                {(stock.billing_mode ?? 'quantity') === 'length_ft' &&
+                                {isCut &&
                                     stock.length_pairs_qty_matches_sum === false &&
                                     stock.length_pairs_sum_ft != null && (
                                         <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                                            Saved length rows add up to{' '}
+                                            Saved cut rows add up to{' '}
                                             <span className="font-semibold">
-                                                {formatQty(stock.length_pairs_sum_ft)} ft
+                                                {formatQty(stock.length_pairs_sum_ft)} {sumUnit}
                                             </span>
                                             , which differs from on-hand quantity. Inventory uses the on-hand
                                             value after sales, transfers, and adjustments; open Edit and save to

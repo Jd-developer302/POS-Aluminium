@@ -11,7 +11,7 @@ use App\Models\Quotation;
 use App\Models\QuotationItem;
 use App\Models\Setting;
 use App\Models\Supplier\Customer;
-use App\Support\LengthBillingPairs;
+use App\Support\BillingLineResolver;
 use App\Support\QuotationDisplayRows;
 use Barryvdh\DomPDF\PDF;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -75,29 +75,9 @@ class QuotationController extends Controller
         }
 
         foreach ($validated['items'] as $it) {
-            $mode = $it['billing_mode'] ?? 'quantity';
-            if ($mode === 'length_ft') {
-                $pairsRaw = is_array($it['length_pairs'] ?? null) ? $it['length_pairs'] : [];
-                $pairs = LengthBillingPairs::normalizeLengthPairsForStorage($pairsRaw);
-                $totalFt = LengthBillingPairs::totalFeetFromLengthPairs($pairs);
-                if ($totalFt <= 0) {
-                    return redirect()
-                        ->back()
-                        ->withInput()
-                        ->with('error', 'Length billing: total feet must be greater than zero (check length × qty rows).');
-                }
-                $rate = (float) ($it['rate_per_ft'] ?? $it['unit_price'] ?? 0);
-                if ($rate <= 0) {
-                    return redirect()
-                        ->back()
-                        ->withInput()
-                        ->with('error', 'Length billing: rate per ft must be greater than zero.');
-                }
-            } elseif ((float) ($it['quantity'] ?? 0) < 0.0001) {
-                return redirect()
-                    ->back()
-                    ->withInput()
-                    ->with('error', 'Each line must have a quantity greater than zero (or use length billing).');
+            $err = BillingLineResolver::validateSaleQuotationItem($it);
+            if ($err !== null) {
+                return redirect()->back()->withInput()->with('error', $err);
             }
         }
 
@@ -142,31 +122,15 @@ class QuotationController extends Controller
                         $taxRate = (float) $product->tax->rate;
                     }
 
-                    $billingMode = ($it['billing_mode'] ?? 'quantity') === 'length_ft' ? 'length_ft' : 'quantity';
-
-                    if ($billingMode === 'length_ft') {
-                        $pairs = is_array($it['length_pairs'] ?? null) ? $it['length_pairs'] : [];
-                        $normalizedPairs = LengthBillingPairs::normalizeLengthPairsForStorage($pairs);
-                        $totalFt = LengthBillingPairs::totalFeetFromLengthPairs($normalizedPairs);
-                        $rate = round((float) ($it['rate_per_ft'] ?? $it['unit_price'] ?? 0), 2);
-                        $gross = round($totalFt * $rate, 2);
-                        $pct = isset($it['discount_percent']) ? (float) $it['discount_percent'] : 0.0;
-                        $pct = min(100.0, max(0.0, $pct));
-                        $lineDiscountAmt = round($gross * $pct / 100, 2);
-                        $lineSubtotal = round(max(0.0, $gross - $lineDiscountAmt), 2);
-                        $qtyStored = $totalFt;
-                        $unitPriceStored = $rate;
-                        $discountType = $pct > 0 ? 'percent' : null;
-                        $discountValue = $pct;
-                    } else {
-                        $normalizedPairs = null;
-                        $qtyStored = (float) $it['quantity'];
-                        $unitPriceStored = (float) $it['unit_price'];
-                        $lineDiscountAmt = 0.0;
-                        $lineSubtotal = round($qtyStored * $unitPriceStored, 2);
-                        $discountType = null;
-                        $discountValue = 0.0;
-                    }
+                    $resolved = BillingLineResolver::resolveSaleQuotationLine($it);
+                    $billingMode = $resolved['billing_mode'];
+                    $normalizedPairs = $resolved['length_pairs'];
+                    $qtyStored = $resolved['quantity'];
+                    $unitPriceStored = $resolved['unit_price'];
+                    $lineSubtotal = $resolved['line_subtotal'];
+                    $lineDiscountAmt = $resolved['discount_amount'];
+                    $discountType = $resolved['discount_type'];
+                    $discountValue = $resolved['discount_value'];
 
                     $lineTax = round($lineSubtotal * ($taxRate / 100), 2);
                     $lineTotal = round($lineSubtotal + $lineTax, 2);
@@ -297,7 +261,7 @@ class QuotationController extends Controller
         $products = $this->quotationFormProducts();
 
         $items = $quotation->items->map(function (QuotationItem $row) {
-            $mode = $row->billing_mode === 'length_ft' ? 'length_ft' : 'quantity';
+            $mode = BillingLineResolver::normalizeMode($row->billing_mode);
             $pairs = $row->length_pairs;
             if (! is_array($pairs)) {
                 $pairs = [];
@@ -305,10 +269,18 @@ class QuotationController extends Controller
             $padded = [];
             for ($i = 0; $i < 4; $i++) {
                 $r = $pairs[$i] ?? null;
-                $padded[] = [
-                    'length' => isset($r['length']) ? (string) $r['length'] : '',
-                    'qty' => isset($r['qty']) ? (string) $r['qty'] : '',
-                ];
+                if ($mode === 'area_sqft') {
+                    $padded[] = [
+                        'width' => isset($r['width']) ? (string) $r['width'] : '',
+                        'height' => isset($r['height']) ? (string) $r['height'] : '',
+                        'qty' => isset($r['qty']) ? (string) $r['qty'] : '',
+                    ];
+                } else {
+                    $padded[] = [
+                        'length' => isset($r['length']) ? (string) $r['length'] : '',
+                        'qty' => isset($r['qty']) ? (string) $r['qty'] : '',
+                    ];
+                }
             }
             $pct = '0';
             if ($row->discount_type === 'percent' && (float) $row->discount_value > 0) {
@@ -321,9 +293,12 @@ class QuotationController extends Controller
                 'billing_mode' => $mode,
                 'length_pairs' => $padded,
                 'rate_per_ft' => $mode === 'length_ft' ? (string) $row->unit_price : '',
+                'rate_per_sqft' => $mode === 'area_sqft' ? (string) $row->unit_price : '',
                 'discount_percent' => $pct,
                 'quantity' => (string) $row->quantity,
-                'unit_price' => $mode === 'length_ft' ? (string) $row->unit_price : (float) $row->unit_price,
+                'unit_price' => in_array($mode, ['length_ft', 'area_sqft'], true)
+                    ? (string) $row->unit_price
+                    : (float) $row->unit_price,
             ];
         })->values()->all();
 
@@ -360,29 +335,9 @@ class QuotationController extends Controller
         }
 
         foreach ($validated['items'] as $it) {
-            $mode = $it['billing_mode'] ?? 'quantity';
-            if ($mode === 'length_ft') {
-                $pairsRaw = is_array($it['length_pairs'] ?? null) ? $it['length_pairs'] : [];
-                $pairs = LengthBillingPairs::normalizeLengthPairsForStorage($pairsRaw);
-                $totalFt = LengthBillingPairs::totalFeetFromLengthPairs($pairs);
-                if ($totalFt <= 0) {
-                    return redirect()
-                        ->back()
-                        ->withInput()
-                        ->with('error', 'Length billing: total feet must be greater than zero (check length × qty rows).');
-                }
-                $rate = (float) ($it['rate_per_ft'] ?? $it['unit_price'] ?? 0);
-                if ($rate <= 0) {
-                    return redirect()
-                        ->back()
-                        ->withInput()
-                        ->with('error', 'Length billing: rate per ft must be greater than zero.');
-                }
-            } elseif ((float) ($it['quantity'] ?? 0) < 0.0001) {
-                return redirect()
-                    ->back()
-                    ->withInput()
-                    ->with('error', 'Each line must have a quantity greater than zero (or use length billing).');
+            $err = BillingLineResolver::validateSaleQuotationItem($it);
+            if ($err !== null) {
+                return redirect()->back()->withInput()->with('error', $err);
             }
         }
 
@@ -420,31 +375,15 @@ class QuotationController extends Controller
                         $taxRate = (float) $product->tax->rate;
                     }
 
-                    $billingMode = ($it['billing_mode'] ?? 'quantity') === 'length_ft' ? 'length_ft' : 'quantity';
-
-                    if ($billingMode === 'length_ft') {
-                        $pairs = is_array($it['length_pairs'] ?? null) ? $it['length_pairs'] : [];
-                        $normalizedPairs = LengthBillingPairs::normalizeLengthPairsForStorage($pairs);
-                        $totalFt = LengthBillingPairs::totalFeetFromLengthPairs($normalizedPairs);
-                        $rate = round((float) ($it['rate_per_ft'] ?? $it['unit_price'] ?? 0), 2);
-                        $gross = round($totalFt * $rate, 2);
-                        $pct = isset($it['discount_percent']) ? (float) $it['discount_percent'] : 0.0;
-                        $pct = min(100.0, max(0.0, $pct));
-                        $lineDiscountAmt = round($gross * $pct / 100, 2);
-                        $lineSubtotal = round(max(0.0, $gross - $lineDiscountAmt), 2);
-                        $qtyStored = $totalFt;
-                        $unitPriceStored = $rate;
-                        $discountType = $pct > 0 ? 'percent' : null;
-                        $discountValue = $pct;
-                    } else {
-                        $normalizedPairs = null;
-                        $qtyStored = (float) $it['quantity'];
-                        $unitPriceStored = (float) $it['unit_price'];
-                        $lineDiscountAmt = 0.0;
-                        $lineSubtotal = round($qtyStored * $unitPriceStored, 2);
-                        $discountType = null;
-                        $discountValue = 0.0;
-                    }
+                    $resolved = BillingLineResolver::resolveSaleQuotationLine($it);
+                    $billingMode = $resolved['billing_mode'];
+                    $normalizedPairs = $resolved['length_pairs'];
+                    $qtyStored = $resolved['quantity'];
+                    $unitPriceStored = $resolved['unit_price'];
+                    $lineSubtotal = $resolved['line_subtotal'];
+                    $lineDiscountAmt = $resolved['discount_amount'];
+                    $discountType = $resolved['discount_type'];
+                    $discountValue = $resolved['discount_value'];
 
                     $lineTax = round($lineSubtotal * ($taxRate / 100), 2);
                     $lineTotal = round($lineSubtotal + $lineTax, 2);
@@ -576,11 +515,14 @@ class QuotationController extends Controller
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:products,id'],
             'items.*.product_variant_id' => ['nullable', 'exists:product_varients,id'],
-            'items.*.billing_mode' => ['nullable', Rule::in(['quantity', 'length_ft'])],
+            'items.*.billing_mode' => ['nullable', Rule::in(BillingLineResolver::allowedModes())],
             'items.*.length_pairs' => ['nullable', 'array'],
             'items.*.length_pairs.*.length' => ['nullable', 'numeric', 'min:0'],
+            'items.*.length_pairs.*.width' => ['nullable', 'numeric', 'min:0'],
+            'items.*.length_pairs.*.height' => ['nullable', 'numeric', 'min:0'],
             'items.*.length_pairs.*.qty' => ['nullable', 'numeric', 'min:0'],
             'items.*.rate_per_ft' => ['nullable', 'numeric', 'min:0'],
+            'items.*.rate_per_sqft' => ['nullable', 'numeric', 'min:0'],
             'items.*.discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'items.*.quantity' => ['required', 'numeric', 'min:0'],
             'items.*.unit_price' => ['required', 'numeric', 'min:0'],

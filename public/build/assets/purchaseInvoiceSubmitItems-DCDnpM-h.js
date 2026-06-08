@@ -1,0 +1,1 @@
+import{t as u}from"./billingItemSubmit-DwgpkWP4.js";function n(t){return(t??[]).map(r=>{const c=u([r])[0],o=r.product_batch_id===""||r.product_batch_id==null?null:Number(r.product_batch_id);return{...c,product_batch_id:o}})}export{n as t};

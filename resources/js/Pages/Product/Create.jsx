@@ -437,6 +437,7 @@ export default function Create({
             return {
                 ...form,
                 brand_id: form.brand_id || null,
+                sub_category_id: form.sub_category_id || null,
                 tax_id: form.tax_id || null,
                 barcode: null,
                 variants: isVariable
@@ -771,9 +772,7 @@ export default function Create({
     };
 
     const ready =
-        (categoryOptions?.length ?? 0) > 0 &&
-        (subCategoryOptions?.length ?? 0) > 0 &&
-        (unitOptions?.length ?? 0) > 0;
+        (categoryOptions?.length ?? 0) > 0 && (unitOptions?.length ?? 0) > 0;
 
     return (
         <AuthenticatedLayout
@@ -781,8 +780,8 @@ export default function Create({
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">New product</h1>
                     <p className="mt-1 text-sm text-gray-500">
-                        Slug is generated from the name. Sub category must match
-                        category.
+                        Slug is generated from the name. Sub category is optional
+                        but must match the selected category when set.
                     </p>
                 </div>
             }
@@ -793,8 +792,8 @@ export default function Create({
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
                     <p className="font-medium">Setup required</p>
                     <p className="mt-1">
-                        You need at least one category, one sub category under it,
-                        and one unit before creating products.
+                        You need at least one category and one unit before creating
+                        products.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                         <button
@@ -928,7 +927,7 @@ export default function Create({
                                         <div className="flex items-center justify-between">
                                             <InputLabel
                                                 htmlFor="sub_category_id"
-                                                value="Sub category"
+                                                value="Sub category (optional)"
                                             />
                                             <button
                                                 type="button"
@@ -944,7 +943,7 @@ export default function Create({
                                                 id="sub_category_id"
                                                 type="text"
                                                 className="block w-full rounded-md border-0 px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:ring-2 focus:ring-indigo-500"
-                                                placeholder="Search sub category..."
+                                                placeholder="Optional — search sub category..."
                                                 value={
                                                     String(searchQuery.subCategory ?? '').trim() !== ''
                                                         ? searchQuery.subCategory
@@ -1838,7 +1837,7 @@ export default function Create({
                                         Cancel
                                     </Link>
                                     <PrimaryButton
-                                        disabled={processing || subOptions.length === 0}
+                                        disabled={processing}
                                         className="justify-center bg-brand hover:bg-brand-dark sm:min-w-[10rem]"
                                     >
                                         Save Product
