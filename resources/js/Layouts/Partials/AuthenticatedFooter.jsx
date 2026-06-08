@@ -9,29 +9,6 @@ export default function AuthenticatedFooter() {
                     </span>{' '}
                     TechLape
                 </p>
-                {/* <div className="flex flex-wrap justify-center gap-4">
-                    <a
-                        href="#"
-                        className="hover:text-brand-dark"
-                        onClick={(e) => e.preventDefault()}
-                    >
-                        About Us
-                    </a>
-                    <a
-                        href="#"
-                        className="hover:text-brand-dark"
-                        onClick={(e) => e.preventDefault()}
-                    >
-                        Blog
-                    </a>
-                    <a
-                        href="#"
-                        className="hover:text-brand-dark"
-                        onClick={(e) => e.preventDefault()}
-                    >
-                        License
-                    </a>
-                </div> */}
             </div>
         </footer>
     );
